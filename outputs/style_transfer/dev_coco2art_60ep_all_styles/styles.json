@@ -1,0 +1,26 @@
+[
+  {
+    "style": "face_style_baseline.heic",
+    "result": "/home/vision1/Desktop/jaduo/QuantArt/outputs/style_transfer/dev_coco2art_60ep_all_styles/face_style_baseline/finetuned_quantart.png"
+  },
+  {
+    "style": "style_baseline.heic",
+    "result": "/home/vision1/Desktop/jaduo/QuantArt/outputs/style_transfer/dev_coco2art_60ep_all_styles/style_baseline/finetuned_quantart.png"
+  },
+  {
+    "style": "style_baseline_2.heic",
+    "result": "/home/vision1/Desktop/jaduo/QuantArt/outputs/style_transfer/dev_coco2art_60ep_all_styles/style_baseline_2/finetuned_quantart.png"
+  },
+  {
+    "style": "style_baseline_3.heic",
+    "result": "/home/vision1/Desktop/jaduo/QuantArt/outputs/style_transfer/dev_coco2art_60ep_all_styles/style_baseline_3/finetuned_quantart.png"
+  },
+  {
+    "style": "style_image_2.avif",
+    "result": "/home/vision1/Desktop/jaduo/QuantArt/outputs/style_transfer/dev_coco2art_60ep_all_styles/style_image_2/finetuned_quantart.png"
+  },
+  {
+    "style": "tree_style.HEIC",
+    "result": "/home/vision1/Desktop/jaduo/QuantArt/outputs/style_transfer/dev_coco2art_60ep_all_styles/tree_style/finetuned_quantart.png"
+  }
+]

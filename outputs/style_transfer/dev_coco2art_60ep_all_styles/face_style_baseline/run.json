@@ -1,0 +1,30 @@
+{
+  "config": "configs/coco2art.yaml",
+  "ckpt": "../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt",
+  "decoder": "outputs/finetune_decoder/dev_coco2art_60ep/checkpoints/last_decoder.pt",
+  "content": "/home/vision1/Desktop/jaduo/QuantArt/test/style_image.HEIC",
+  "style": "/home/vision1/Desktop/jaduo/QuantArt/test/face_style_baseline.heic",
+  "out": "/home/vision1/Desktop/jaduo/QuantArt/outputs/style_transfer/dev_coco2art_60ep_all_styles/face_style_baseline",
+  "size": 512,
+  "device": "cuda",
+  "mode": "continuous",
+  "padding": "edge; removed from outputs",
+  "content_crop": [
+    0,
+    64,
+    512,
+    448
+  ],
+  "content_source_size": [
+    5712,
+    4284
+  ],
+  "artwork_source_size": [
+    2409,
+    3463
+  ],
+  "output_size": [
+    512,
+    384
+  ]
+}

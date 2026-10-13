@@ -22,4 +22,7 @@ imgs_*/
 # Run outputs
 logs/*
 !logs/.gitignore
-outputs/
+
+# Keep training artifacts local; publish style-transfer results.
+outputs/*
+!outputs/style_transfer/
