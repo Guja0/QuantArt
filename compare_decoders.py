@@ -9,6 +9,10 @@
                   feature space (lower = closer to the reference style)
      content_l1   L1 between content and output in photo-encoder latent space
                   (lower = more content preserved)
+   and two pixel-space metrics from the frozen LPIPS VGG16:
+     style_vgg    Gram-matrix MSE between output and reference over relu1_2..relu4_3 (Gatys et al.;
+                  lower = closer to the reference style, sees brushstroke-scale texture)
+     content_lpips  LPIPS between output and content photo (lower = more content preserved)
 """
 import argparse, csv, json, os
 
@@ -62,6 +66,15 @@ class ContinuousQuantArt(torch.nn.Module):
     @torch.no_grad()
     def content_latent(self, x):
         return self.quant_conv(self.encoder(x))
+
+
+@torch.no_grad()
+def vgg_style_distance(lpips, y, ref, layers=4):
+    """Sum over VGG16 relu1_2..relu4_3 of the Gram-matrix MSE (features normalised by c*h*w)."""
+    def grams(x):
+        feats = lpips.net(lpips.scaling_layer(x))[:layers]
+        return [(f.flatten(2) @ f.flatten(2).transpose(1, 2)) / f[0].numel() for f in feats]
+    return sum(F.mse_loss(a, b) for a, b in zip(grams(y), grams(ref))).item()
 
 
 def load_fixed(path, size=256):
@@ -147,6 +160,9 @@ def main():
                 y = outputs[tag][ci, si:si + 1].to(device)
                 row[f"{tag}_style_gram"] = (qa.gram(y) - qa.gram(ref)).pow(2).mean().sqrt().item()
                 row[f"{tag}_content_l1"] = F.l1_loss(qa.content_latent(y), qa.content_latent(content)).item()
+                row[f"{tag}_style_vgg"] = vgg_style_distance(lpips, y, ref)
+                with torch.no_grad():
+                    row[f"{tag}_content_lpips"] = lpips(y, content).item()
             st_rows.append(row)
     st_dir = os.path.join(out, "style_transfer")
     os.makedirs(st_dir, exist_ok=True)

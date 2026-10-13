@@ -17,8 +17,8 @@ This is a copy of the official QuantArt code with an added experiment: fine-tuni
 | File | Purpose |
 | ---- | ---- |
 | `make_cu_split.py` | Converts the artworks to JPEG and splits them 140 / 20 / 20 (train / val / test), keeping duplicate and near-duplicate images in the same split. The resulting lists are in `datasets/CU_data_split/`. |
-| `finetune_artwork_decoder.py` | Freezes the artwork encoder (eval mode) and trains only the decoder on the no-codebook path, at 256×256 with random crops and horizontal flips. Loss: L1, optionally plus LPIPS (`--perceptual_weight`). Validates every epoch, keeps the best checkpoint, stops early when training improves while validation gets worse, and logs to TensorBoard. |
-| `compare_decoders.py` | Evaluates the original and the fine-tuned decoder once on the test set (L1 / PSNR / LPIPS), then runs QuantArt style transfer with identical content–style pairs through both decoders. |
+| `finetune_artwork_decoder.py` | Freezes the artwork encoder (eval mode) and trains only the decoder on the no-codebook path. Training crops are 256×256 random-resized crops (shorter side drawn from 256 to `--scale_max`×256, capped at the native size) with horizontal flips. Loss: L1 + LPIPS (`--perceptual_weight`, default 1.0), optionally plus a PatchGAN hinge loss with DiffAugment and taming's adaptive weight (`--disc_weight`). Adam with linear warmup + cosine decay; an EMA copy of the decoder (`--ema`) is validated and saved. Validates every epoch, keeps the best checkpoint by val LPIPS (`--select_metric`), stops early when training improves while validation gets worse, and logs to TensorBoard. |
+| `compare_decoders.py` | Evaluates the original and the fine-tuned decoder once on the test set (L1 / PSNR / LPIPS), then runs QuantArt style transfer with identical content–style pairs through both decoders and scores it with latent proxies plus a VGG Gram style distance and LPIPS to the content photo. |
 | `reconstruct_artwork.py` | Reconstructs images with a single autoencoder (the artwork autoencoder, or a Stage-1 VQGAN via `--stage1`), with and without vector quantization. |
 | `main.py` | One change: falls back to CPU when CUDA is unavailable. |
 
@@ -26,12 +26,13 @@ The new scripts use plain PyTorch (see `requirements-train.txt`) and run on Appl
 
 ```
 python make_cu_split.py
-python finetune_artwork_decoder.py --run l1_lpips_10ep --perceptual_weight 1.0
-python compare_decoders.py --run outputs/finetune_decoder/l1_lpips_10ep
+python finetune_artwork_decoder.py --run l1_lpips_60ep_ema
+python finetune_artwork_decoder.py --run l1_lpips_gan_60ep_ema --disc_weight 0.5
+python compare_decoders.py --run outputs/finetune_decoder/l1_lpips_60ep_ema
 tensorboard --logdir outputs/finetune_decoder
 ```
 
-By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture.
+By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture. Those runs used 10 epochs at lr 3e-6 (about 350 steps), fixed 288 px crops and no EMA or GAN; the closest equivalent now is `--epochs 10 --lr 3e-6 --min_lr_ratio 1 --warmup_steps 0 --scale_max 1.125 --ema 0 --select_metric loss --patience 2` (crops are now drawn from 256–288 px instead of always 288 px).
 
 ## 🔴Update (07/20/2025)
 I have fixed all the links to the pretrained models, but I cannot guarantee their weights are 100% correct. Feel free to report any issues!

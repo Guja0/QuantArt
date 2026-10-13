@@ -2,15 +2,20 @@
 
 Path (no codebook):  x -> encoder_real -> quant_conv_real -> post_quant_conv -> decoder -> x_hat
 Frozen (eval mode):   encoder_real, quant_conv_real
-Trained:              post_quant_conv, decoder
+Trained:              post_quant_conv, decoder (or only the modules given with --train_layers)
 Loss:                 L1(x_hat, x) + perceptual_weight * LPIPS(x_hat, x), where x is the same
-                      augmented image that was fed to the encoder (perceptual_weight=0: L1 only).
+                      augmented image that was fed to the encoder (perceptual_weight=0: L1 only),
+                      + optionally a PatchGAN hinge loss with taming's adaptive weight (--disc_weight > 0).
+Data:                 random-resized crops: shorter side drawn from [size, size*scale_max] (capped at the
+                      native resolution), so the decoder also sees brushstrokes near full resolution.
+Optimisation:         Adam, linear warmup + cosine decay per step; an EMA copy of the decoder weights is
+                      validated and saved (--ema 0 disables it).
 
 Steps: baseline reconstructions on a few val images -> train with per-epoch validation
-(best-val checkpoint, stop when train improves while val worsens) -> TensorBoard logs.
+(best-val checkpoint on --select_metric, stop when train improves while val worsens) -> TensorBoard logs.
 Test-set evaluation and the style-transfer comparison live in compare_decoders.py.
 """
-import argparse, json, os, pickle, random, time, types
+import argparse, copy, json, math, os, pickle, random, time, types
 
 import numpy as np
 import torch
@@ -67,22 +72,30 @@ def to_image(x):
 
 
 class ArtworkDataset(Dataset):
-    """train: shorter side -> size*scale, random size x size crop, horizontal flip with p=flip_p.
+    """train: shorter side -> random in [size, size*scale_max] (never above the native size),
+    random size x size crop, horizontal flip with p=flip_p.
     val/test: shorter side -> size, center crop (fixed)."""
 
-    def __init__(self, root, list_file, size=256, train=False, scale=1.125, flip_p=0.5):
+    def __init__(self, root, list_file, size=256, train=False, scale_max=1.125, flip_p=0.5):
         with open(list_file) as f:
             self.names = [l.strip() for l in f if l.strip()]
         self.size, self.train, self.flip_p = size, train, flip_p
-        target = round(size * scale) if train else size
-        # Images are small, so decode and resize once and keep them in memory.
-        self.images = [resize_shorter(Image.open(os.path.join(root, n)).convert("RGB"), target) for n in self.names]
+        target = round(size * scale_max) if train else size
+        # Decode and resize once to the largest scale needed and keep the images in memory.
+        self.images = []
+        for n in self.names:
+            im = Image.open(os.path.join(root, n)).convert("RGB")
+            self.images.append(resize_shorter(im, min(target, min(im.size)) if train else target))
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, i):
         im, s = self.images[i], self.size
+        if self.train:
+            short = min(im.size)
+            if short > s:
+                im = resize_shorter(im, random.randint(s, short))
         w, h = im.size
         if self.train:
             left, top = random.randint(0, w - s), random.randint(0, h - s)
@@ -130,8 +143,24 @@ class ContinuousArtworkAE(torch.nn.Module):
             for p in m.parameters():
                 p.requires_grad_(False)
 
-    def decoder_parameters(self):
-        return list(self.post_quant_conv.parameters()) + list(self.decoder.parameters())
+    def decoder_parameters(self, train_layers=None):
+        """Trainable decoder-side parameters. train_layers: module-name prefixes such as
+        "decoder.up.0" or "decoder.conv_out"; everything else on the decoder side is frozen.
+        None trains post_quant_conv and the whole decoder."""
+        named = list(self.post_quant_conv.named_parameters(prefix="post_quant_conv")) + \
+            list(self.decoder.named_parameters(prefix="decoder"))
+        if train_layers is None:
+            return [p for _, p in named]
+        unknown = [l for l in train_layers if not any(n.startswith(l + ".") for n, _ in named)]
+        if unknown:
+            raise ValueError(f"no decoder parameters match {unknown}")
+        params = []
+        for n, p in named:
+            train = any(n.startswith(l + ".") for l in train_layers)
+            p.requires_grad_(train)
+            if train:
+                params.append(p)
+        return params
 
 
 def _contiguous_grad_hook(module, inputs, output):
@@ -175,6 +204,53 @@ def reconstruction_loss(x_hat, x, lpips, perceptual_weight):
     l1 = F.l1_loss(x_hat, x, reduction="none").flatten(1).mean(1)
     p = lpips(x_hat.contiguous(), x.contiguous()).flatten() if lpips is not None else torch.zeros_like(l1)
     return l1 + perceptual_weight * p, l1, p
+
+
+# ----------------------------------------------------------------------------- GAN / EMA / schedule
+
+def diff_augment(x, translation=0.125, cutout=0.5):
+    """Differentiable translation + cutout (DiffAugment), applied to both real and fake images
+    before the discriminator so it cannot simply memorise the 140 training artworks."""
+    b, _, h, w = x.shape
+    dy, dx = (random.randint(-int(s * translation), int(s * translation)) for s in (h, w))
+    x = torch.roll(F.pad(x, (abs(dx), abs(dx), abs(dy), abs(dy))), shifts=(dy, dx), dims=(2, 3))
+    x = x[:, :, abs(dy):abs(dy) + h, abs(dx):abs(dx) + w]
+    ch, cw = int(h * cutout / 2), int(w * cutout / 2)
+    ys = torch.randint(0, h - ch + 1, (b, 1, 1), device=x.device)
+    xs = torch.randint(0, w - cw + 1, (b, 1, 1), device=x.device)
+    gy = torch.arange(h, device=x.device).view(1, h, 1)
+    gx = torch.arange(w, device=x.device).view(1, 1, w)
+    hole = (gy >= ys) & (gy < ys + ch) & (gx >= xs) & (gx < xs + cw)
+    return x * (~hole).unsqueeze(1).to(x.dtype)
+
+
+def hinge_d_loss(logits_real, logits_fake):
+    return 0.5 * (F.relu(1.0 - logits_real).mean() + F.relu(1.0 + logits_fake).mean())
+
+
+def adaptive_gan_weight(rec_loss, g_loss, last_layer):
+    # taming VQLPIPSWithDiscriminator.calculate_adaptive_weight: balance the gradient norms at the last layer.
+    rec_grad = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
+    g_grad = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
+    return (rec_grad.norm() / (g_grad.norm() + 1e-4)).clamp(0.0, 1e4).detach()
+
+
+@torch.no_grad()
+def ema_update(ema_model, model, step, decay):
+    # Warmup (as in timm/TF): short effective horizon early so the EMA does not lag the start.
+    d = min(decay, (1 + step) / (10 + step))
+    for (_, pe), (_, p) in zip(ema_model.named_parameters(), model.named_parameters()):
+        if p.requires_grad:
+            pe.lerp_(p, 1.0 - d)
+
+
+def warmup_cosine(warmup_steps, total_steps, min_ratio):
+    def f(step):
+        if step < warmup_steps:
+            return (step + 1) / warmup_steps
+        t = min(1.0, (step - warmup_steps) / max(1, total_steps - warmup_steps))
+        return min_ratio + (1 - min_ratio) * 0.5 * (1 + math.cos(math.pi * t))
+    return f
 
 
 @torch.no_grad()
@@ -221,15 +297,32 @@ def main():
     parser.add_argument("--out", default="outputs/finetune_decoder")
     parser.add_argument("--run", default=None, help="run name (default: timestamp)")
     parser.add_argument("--size", type=int, default=256)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--scale_max", type=float, default=2.5,
+                        help="train crops: shorter side drawn from [size, size*scale_max] (1.125 ~ the old fixed 288 px)")
+    parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=3e-6)
+    parser.add_argument("--lr", type=float, default=1e-5,
+                        help="peak LR (config base_learning_rate 4.5e-6 x batch 4 = 1.8e-5 in taming)")
+    parser.add_argument("--warmup_steps", type=int, default=100)
+    parser.add_argument("--min_lr_ratio", type=float, default=0.1, help="cosine decays to lr * this; 1 = constant LR")
+    parser.add_argument("--ema", type=float, default=0.999, help="EMA decay of the decoder weights; 0 = off")
     parser.add_argument("--flip_p", type=float, default=0.5)
-    parser.add_argument("--perceptual_weight", type=float, default=0.0,
+    parser.add_argument("--train_layers", nargs="+", default=None,
+                        help="decoder-side modules to train, e.g. decoder.up.0 decoder.conv_out; "
+                             "all other decoder layers are frozen (default: post_quant_conv + whole decoder)")
+    parser.add_argument("--perceptual_weight", type=float, default=1.0,
                         help="weight of the LPIPS term (taming VQGAN uses 1.0); 0 = L1 only")
+    parser.add_argument("--disc_weight", type=float, default=0.0,
+                        help="PatchGAN loss weight on top of taming's adaptive weight (taming: 1.0); 0 = no GAN")
+    parser.add_argument("--disc_start", type=int, default=500,
+                        help="step at which the GAN term enters the decoder loss (the discriminator trains from step 0)")
+    parser.add_argument("--disc_layers", type=int, default=2, help="PatchGAN depth (taming: 3); smaller overfits less")
+    parser.add_argument("--disc_lr", type=float, default=None, help="discriminator LR (default: --lr)")
+    parser.add_argument("--select_metric", choices=["lpips", "loss", "l1"], default="lpips",
+                        help="val metric for the best checkpoint and early stopping")
     parser.add_argument("--n_baseline", type=int, default=6, help="val images reconstructed as baseline")
-    parser.add_argument("--patience", type=int, default=2,
-                        help="stop after this many epochs where train loss improves but val loss is worse than best")
+    parser.add_argument("--patience", type=int, default=5,
+                        help="stop after this many epochs where train loss improves but val is worse than best")
     parser.add_argument("--max_steps", type=int, default=None, help="debug: stop each epoch after this many steps")
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--device", default="auto")
@@ -246,7 +339,8 @@ def main():
         json.dump(vars(opt), f, indent=2)
     print(f"run dir: {run_dir}  device: {device}")
 
-    train_set = ArtworkDataset(opt.data, os.path.join(opt.split, "train.txt"), opt.size, train=True, flip_p=opt.flip_p)
+    train_set = ArtworkDataset(opt.data, os.path.join(opt.split, "train.txt"), opt.size, train=True,
+                               scale_max=opt.scale_max, flip_p=opt.flip_p)
     val_set = ArtworkDataset(opt.data, os.path.join(opt.split, "val.txt"), opt.size)
     train_loader = DataLoader(train_set, batch_size=opt.batch_size, shuffle=True, drop_last=True,
                               num_workers=opt.num_workers)
@@ -257,11 +351,34 @@ def main():
     if device.type == "mps":
         patch_for_mps(model.decoder)
     model.freeze_encoder()
-    params = model.decoder_parameters()
+    params = model.decoder_parameters(opt.train_layers)
     n_train = sum(p.numel() for p in params)
     n_frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-    print(f"trainable {n_train/1e6:.1f}M  frozen {n_frozen/1e6:.1f}M")
+    print(f"train layers: {opt.train_layers or 'post_quant_conv + whole decoder'}")
+    print(f"trainable {n_train/1e6:.2f}M  frozen {n_frozen/1e6:.2f}M")
     optimizer = torch.optim.Adam(params, lr=opt.lr, betas=(0.5, 0.9))
+    steps_per_epoch = len(train_loader) if not opt.max_steps else min(opt.max_steps, len(train_loader))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer, warmup_cosine(opt.warmup_steps, opt.epochs * steps_per_epoch, opt.min_lr_ratio))
+    print(f"{steps_per_epoch} steps/epoch, {opt.epochs * steps_per_epoch} steps max, peak lr {opt.lr}")
+
+    # The EMA copy shares the frozen encoder; validation, samples and checkpoints use it.
+    ema_model = None
+    if opt.ema > 0:
+        ema_model = copy.deepcopy(model)
+        for p in ema_model.parameters():
+            p.requires_grad_(False)
+    eval_model = ema_model or model
+
+    disc = None
+    if opt.disc_weight > 0:
+        from taming.modules.discriminator.model import NLayerDiscriminator, weights_init
+        disc = NLayerDiscriminator(input_nc=3, n_layers=opt.disc_layers).apply(weights_init).to(device)
+        disc_optimizer = torch.optim.Adam(disc.parameters(), lr=opt.disc_lr or opt.lr, betas=(0.5, 0.9))
+        # Gradient balancing at the last trainable conv, as taming does at decoder.conv_out.
+        last_layer = [p for p in params if p.ndim == 4][-1]
+        print(f"PatchGAN: {opt.disc_layers} layers, weight {opt.disc_weight}, enters the loss at step {opt.disc_start}")
+
     writer = SummaryWriter(os.path.join(run_dir, "tensorboard"))
     # LPIPS is always computed on validation (a texture-aware quality metric);
     # it is part of the training loss only when --perceptual_weight > 0.
@@ -269,11 +386,15 @@ def main():
     if device.type == "mps":
         patch_for_mps(lpips)
     w = opt.perceptual_weight
-    print(f"loss = L1 + {w} * LPIPS")
+    print(f"loss = L1 + {w} * LPIPS" + (f" + {opt.disc_weight} * adaptive * GAN" if disc else "")
+          + f"   select on val {opt.select_metric}" + (f"   EMA {opt.ema}" if ema_model else ""))
 
     def log_val(metrics, epoch):
         for k, v in metrics.items():
             writer.add_scalar(f"val/{k}", v, epoch)
+
+    def save_decoder(name):
+        torch.save(eval_model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", name))
 
     # Baseline: pretrained decoder on a fixed set of val images.
     vis = [val_set[i] for i in range(min(opt.n_baseline, len(val_set)))]
@@ -287,8 +408,9 @@ def main():
 
     history = [{"epoch": 0, "train_loss": None, "train_l1": None, "train_lpips": None,
                 **{f"val_{k}": v for k, v in base.items()}}]
-    best_val, best_epoch, bad_epochs, prev_train = base["loss"], 0, 0, None
-    torch.save(model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", "best_decoder.pt"))
+    sel = opt.select_metric
+    best_val, best_epoch, bad_epochs, prev_train = base[sel], 0, 0, None
+    save_decoder("best_decoder.pt")
     step = 0
     for epoch in range(1, opt.epochs + 1):
         model.decoder.train()
@@ -302,23 +424,46 @@ def main():
                 h = model.encode(x)
             x_hat = model.decode(h)
             # target = the same augmented image that went into the encoder
-            loss, l1, p = reconstruction_loss(x_hat, x, lpips if w > 0 else None, w)
-            loss = loss.mean()
+            rec, l1, p = reconstruction_loss(x_hat, x, lpips if w > 0 else None, w)
+            rec = rec.mean()
+            loss = rec
+            if disc is not None and step >= opt.disc_start:
+                disc.requires_grad_(False)
+                g_loss = -disc(diff_augment(x_hat)).mean()
+                d_weight = opt.disc_weight * adaptive_gan_weight(rec, g_loss, last_layer)
+                loss = rec + d_weight * g_loss
+                disc.requires_grad_(True)
+                writer.add_scalar("train/g_loss_step", g_loss.item(), step)
+                writer.add_scalar("train/d_weight_step", d_weight.item(), step)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            scheduler.step()
+            if ema_model is not None:
+                ema_update(ema_model, model, step, opt.ema)
+            if disc is not None:
+                logits_real = disc(diff_augment(x))
+                logits_fake = disc(diff_augment(x_hat.detach()))
+                d_loss = hinge_d_loss(logits_real, logits_fake)
+                disc_optimizer.zero_grad(set_to_none=True)
+                d_loss.backward()
+                disc_optimizer.step()
+                writer.add_scalar("train/d_loss_step", d_loss.item(), step)
+                writer.add_scalar("train/logits_real_step", logits_real.mean().item(), step)
+                writer.add_scalar("train/logits_fake_step", logits_fake.mean().item(), step)
             step += 1
-            for k, v in (("loss", loss.item()), ("l1", l1.mean().item()), ("lpips", p.mean().item())):
+            # "loss" is the reconstruction objective (without the GAN term) so epochs stay comparable.
+            for k, v in (("loss", rec.item()), ("l1", l1.mean().item()), ("lpips", p.mean().item())):
                 sums[k] += v * x.shape[0]
             n += x.shape[0]
-            writer.add_scalar("train/loss_step", loss.item(), step)
+            writer.add_scalar("train/loss_step", rec.item(), step)
             writer.add_scalar("train/l1_step", l1.mean().item(), step)
             if w > 0:
                 writer.add_scalar("train/lpips_step", p.mean().item(), step)
         train = {k: v / n for k, v in sums.items()}
 
-        val = evaluate(model, val_loader, device, lpips, w)
-        vis_now = reconstruct(model, vis_x, device)
+        val = evaluate(eval_model, val_loader, device, lpips, w)
+        vis_now = reconstruct(eval_model, vis_x, device)
         for k, v in train.items():
             if k != "lpips" or w > 0:
                 writer.add_scalar(f"train/{k}", v, epoch)
@@ -329,11 +474,12 @@ def main():
         torchvision.utils.save_image(grid(vis_x, vis_base, vis_now),
                                      os.path.join(run_dir, "val_samples", f"epoch_{epoch:02d}.png"))
 
-        # Model selection and early stopping use the training objective on validation.
-        improved = val["loss"] < best_val
+        # Model selection and early stopping use --select_metric on validation (LPIPS by default:
+        # loss values of runs with different weights are not comparable, and L1 rewards blur).
+        improved = val[sel] < best_val
         if improved:
-            best_val, best_epoch, bad_epochs = val["loss"], epoch, 0
-            torch.save(model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", "best_decoder.pt"))
+            best_val, best_epoch, bad_epochs = val[sel], epoch, 0
+            save_decoder("best_decoder.pt")
         elif prev_train is not None and train["loss"] < prev_train:
             bad_epochs += 1
         prev_train = train["loss"]
@@ -341,16 +487,19 @@ def main():
                         **{f"val_{k}": v for k, v in val.items()}})
         print(f"epoch {epoch:2d}  train loss {train['loss']:.4f}  val loss {val['loss']:.4f}"
               f"  L1 {val['l1']:.4f}  LPIPS {val['lpips']:.4f}  PSNR {val['psnr']:.2f}"
-              f"  {'*best*' if improved else ''}  {time.time()-t0:.0f}s")
+              f"  lr {optimizer.param_groups[0]['lr']:.2e}  {'*best*' if improved else ''}  {time.time()-t0:.0f}s")
         with open(os.path.join(run_dir, "history.json"), "w") as f:
-            json.dump({"best_epoch": best_epoch, "best_val_loss": best_val, "history": history}, f, indent=2)
+            json.dump({"best_epoch": best_epoch, "select_metric": sel, "best_val": best_val,
+                       "history": history}, f, indent=2)
         if bad_epochs >= opt.patience:
             print(f"early stop: train improving while val worse than best for {bad_epochs} epochs")
             break
 
-    torch.save(model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", "last_decoder.pt"))
+    save_decoder("last_decoder.pt")
+    if ema_model is not None:
+        torch.save(model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", "last_decoder_raw.pt"))
     writer.close()
-    print(f"best epoch {best_epoch}  val loss {best_val:.4f}  -> {run_dir}/checkpoints/best_decoder.pt")
+    print(f"best epoch {best_epoch}  val {sel} {best_val:.4f}  -> {run_dir}/checkpoints/best_decoder.pt")
 
 
 if __name__ == "__main__":
