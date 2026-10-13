@@ -11,6 +11,28 @@ We devise a new style transfer framework called QuantArt for high visual-fidelit
  <img alt='Thumbnail' src='imgs/thumb.png'>
 </p>
 
+## About this repository
+This is a copy of the official QuantArt code with an added experiment: fine-tuning QuantArt's **continuous artwork decoder** on a small custom artwork set (180 photographed artworks, not included in the repo). The original code and history are kept; the additions are:
+
+| File | Purpose |
+| ---- | ---- |
+| `make_cu_split.py` | Converts the artworks to JPEG and splits them 140 / 20 / 20 (train / val / test), keeping duplicate and near-duplicate images in the same split. The resulting lists are in `datasets/CU_data_split/`. |
+| `finetune_artwork_decoder.py` | Freezes the artwork encoder (eval mode) and trains only the decoder on the no-codebook path, at 256×256 with random crops and horizontal flips. Loss: L1, optionally plus LPIPS (`--perceptual_weight`). Validates every epoch, keeps the best checkpoint, stops early when training improves while validation gets worse, and logs to TensorBoard. |
+| `compare_decoders.py` | Evaluates the original and the fine-tuned decoder once on the test set (L1 / PSNR / LPIPS), then runs QuantArt style transfer with identical content–style pairs through both decoders. |
+| `reconstruct_artwork.py` | Reconstructs images with a single autoencoder (the artwork autoencoder, or a Stage-1 VQGAN via `--stage1`), with and without vector quantization. |
+| `main.py` | One change: falls back to CPU when CUDA is unavailable. |
+
+The new scripts use plain PyTorch (see `requirements-train.txt`) and run on Apple Silicon (MPS).
+
+```
+python make_cu_split.py
+python finetune_artwork_decoder.py --run l1_lpips_10ep --perceptual_weight 1.0
+python compare_decoders.py --run outputs/finetune_decoder/l1_lpips_10ep
+tensorboard --logdir outputs/finetune_decoder
+```
+
+By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture.
+
 ## 🔴Update (07/20/2025)
 I have fixed all the links to the pretrained models, but I cannot guarantee their weights are 100% correct. Feel free to report any issues!
 

@@ -1,0 +1,11 @@
+# Environment for finetune_artwork_decoder.py / compare_decoders.py / reconstruct_artwork.py
+# (plain PyTorch, no pytorch-lightning; Python 3.11, works on Apple Silicon MPS)
+torch==2.5.1
+torchvision==0.20.1
+numpy<2
+omegaconf==2.3.0
+tensorboard
+pillow
+einops
+requests
+tqdm

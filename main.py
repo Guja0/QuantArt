@@ -576,7 +576,7 @@ if __name__ == "__main__":
                 melk()
                 raise
         if not opt.no_test and not trainer.interrupted:
-            device = torch.device('cuda:0')
+            device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
             model = model.to(device)
             model.eval()
             loader = DataLoader(data.datasets["test"], batch_size=data.batch_size,collate_fn=custom_collate)

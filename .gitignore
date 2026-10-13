@@ -1,0 +1,25 @@
+# Python / OS
+__pycache__/
+*.pyc
+.DS_Store
+
+# Model checkpoints (too large for GitHub; download links in README)
+*.ckpt
+*.pt
+*.pth
+!taming/modules/autoencoder/lpips/vgg.pth
+landscape2art/
+landscape2art_continuous/
+face2art/
+
+# Data and images (kept local)
+CU_data/
+datasets/*
+!datasets/.gitignore
+!datasets/CU_data_split/
+imgs_*/
+
+# Run outputs
+logs/*
+!logs/.gitignore
+outputs/
