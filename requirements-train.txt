@@ -6,6 +6,7 @@ numpy<2
 omegaconf==2.3.0
 tensorboard
 pillow
+pillow-heif
 einops
 requests
 tqdm

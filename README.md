@@ -34,6 +34,23 @@ tensorboard --logdir outputs/finetune_decoder
 
 By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture. Those runs used 10 epochs at lr 3e-6 (about 350 steps), fixed 288 px crops and no EMA or GAN; the closest equivalent now is `--epochs 10 --lr 3e-6 --min_lr_ratio 1 --warmup_steps 0 --scale_max 1.125 --ema 0 --select_metric loss --patience 2` (crops are now drawn from 256–288 px instead of always 288 px).
 
+## Photo-to-art inference with the 60-epoch dev decoder
+
+`stylize_pair.py` runs the complete continuous QuantArt pipeline with your fine-tuned artwork decoder. It accepts JPEG/PNG and HEIC images (`pillow-heif` is included in `requirements-train.txt`). Both inputs are resized and edge-padded to matching square canvases, as required by this branch's cross-attention; padding is removed from the saved photo output. The default canvas is 512×512, preserving the original composition and aspect ratio at reduced resolution.
+
+From `QuantArt`, run:
+
+```bash
+.venv/bin/python -u stylize_pair.py \
+  --config configs/coco2art.yaml \
+  --ckpt ../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt \
+  --decoder outputs/finetune_decoder/dev_coco2art_60ep/checkpoints/last_decoder.pt \
+  --content test/style_image.HEIC --style test/style_baseline.heic \
+  --out outputs/style_transfer/dev_coco2art_60ep_test --size 512 --device cuda
+```
+
+The output folder contains `finetuned_quantart.png`, `original_quantart.png`, and `comparison_photo_art_original_finetuned.png` (panels: photo, artwork, original model, fine-tuned model). `run.json` records the checkpoint, input paths, preprocessing, and dimensions. This uses the codebook-free path matching decoder fine-tuning; `last_decoder.pt` contains the EMA decoder saved at epoch 60.
+
 ## 🔴Update (07/20/2025)
 I have fixed all the links to the pretrained models, but I cannot guarantee their weights are 100% correct. Feel free to report any issues!
 
