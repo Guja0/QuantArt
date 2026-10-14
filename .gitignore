@@ -23,6 +23,8 @@ imgs_*/
 logs/*
 !logs/.gitignore
 
-# Keep training artifacts local; publish style-transfer results.
-outputs/*
-!outputs/style_transfer/
+# Publish output results; keep TensorBoard logs local.
+# Checkpoint .pt files are excluded by the global rule above.
+outputs/**/tensorboard/
+outputs/**/tensorboard.log
+events.out.tfevents.*

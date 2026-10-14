@@ -1,0 +1,12 @@
+[
+  {
+    "content": "/home/vision1/Desktop/jaduo/QuantArt/imgs/content/1.jpg",
+    "style": "/home/vision1/Desktop/jaduo/datasets/CU_data_jpg/IMG_0480.jpg",
+    "directory": "1_fc334e442c__IMG_0480_c0381a3336"
+  },
+  {
+    "content": "/home/vision1/Desktop/jaduo/QuantArt/imgs/content/2.jpg",
+    "style": "/home/vision1/Desktop/jaduo/datasets/CU_data_jpg/IMG_0480.jpg",
+    "directory": "2_618d03e56c__IMG_0480_c0381a3336"
+  }
+]

@@ -1,0 +1,26 @@
+{
+  "metric_group": "train_reconstruction",
+  "best_epoch": 1,
+  "best_loss": 0.538173508644104,
+  "history": [
+    {
+      "epoch": 0,
+      "train_loss": null,
+      "train_reconstruction_loss": 0.5402631713284387,
+      "train_reconstruction_l1": 0.16644256065289179,
+      "train_reconstruction_lpips": 0.3738206128279368,
+      "train_reconstruction_psnr": 19.112639003329807
+    },
+    {
+      "epoch": 1,
+      "train_images_seen": 8,
+      "train_loss": 0.5468164086341858,
+      "train_l1": 0.16182072460651398,
+      "train_lpips": 0.384995698928833,
+      "train_reconstruction_loss": 0.538173508644104,
+      "train_reconstruction_l1": 0.16515700933006075,
+      "train_reconstruction_lpips": 0.37301649848620094,
+      "train_reconstruction_psnr": 19.16687577565511
+    }
+  ]
+}

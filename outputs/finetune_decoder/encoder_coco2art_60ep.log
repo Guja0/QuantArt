@@ -1,0 +1,75 @@
+run dir: outputs/finetune_decoder/encoder_coco2art_60ep  device: cuda
+train 140  val 20
+Working with z of shape (1, 256, 16, 16) = 65536 dimensions.
+Loaded decoder: outputs/finetune_decoder/dev_coco2art_60ep/checkpoints/last_decoder.pt
+train part: encoder_real + quant_conv_real (post_quant_conv + decoder frozen)
+trainable 29.36M  frozen 42.52M
+35 steps/epoch, 2100 steps max, peak lr 1e-05
+/home/vision1/Desktop/jaduo/QuantArt/.venv/lib/python3.13/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/vision1/Desktop/jaduo/QuantArt/.venv/lib/python3.13/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+loaded pretrained LPIPS loss from taming/modules/autoencoder/lpips/vgg.pth
+loss = L1 + 1.0 * LPIPS   select on val lpips   EMA 0.999
+baseline  val loss 0.4813  L1 0.1291  LPIPS 0.3522  PSNR 20.91
+epoch  1  train loss 0.4456  val loss 0.4810  L1 0.1291  LPIPS 0.3519  PSNR 20.91  lr 3.60e-06  *best*  19s
+epoch  2  train loss 0.4410  val loss 0.4807  L1 0.1289  LPIPS 0.3518  PSNR 20.92  lr 7.10e-06  *best*  20s
+epoch  3  train loss 0.4448  val loss 0.4807  L1 0.1287  LPIPS 0.3520  PSNR 20.94  lr 1.00e-05    20s
+epoch  4  train loss 0.4430  val loss 0.4802  L1 0.1285  LPIPS 0.3517  PSNR 20.94  lr 9.99e-06  *best*  20s
+epoch  5  train loss 0.4418  val loss 0.4800  L1 0.1286  LPIPS 0.3514  PSNR 20.94  lr 9.97e-06  *best*  19s
+epoch  6  train loss 0.4426  val loss 0.4796  L1 0.1284  LPIPS 0.3512  PSNR 20.95  lr 9.93e-06  *best*  19s
+epoch  7  train loss 0.4423  val loss 0.4795  L1 0.1282  LPIPS 0.3513  PSNR 20.96  lr 9.88e-06    19s
+epoch  8  train loss 0.4386  val loss 0.4793  L1 0.1283  LPIPS 0.3511  PSNR 20.96  lr 9.82e-06  *best*  19s
+epoch  9  train loss 0.4346  val loss 0.4793  L1 0.1283  LPIPS 0.3510  PSNR 20.96  lr 9.75e-06  *best*  19s
+epoch 10  train loss 0.4369  val loss 0.4793  L1 0.1282  LPIPS 0.3511  PSNR 20.96  lr 9.66e-06    19s
+epoch 11  train loss 0.4360  val loss 0.4791  L1 0.1282  LPIPS 0.3509  PSNR 20.96  lr 9.56e-06  *best*  20s
+epoch 12  train loss 0.4402  val loss 0.4790  L1 0.1282  LPIPS 0.3508  PSNR 20.96  lr 9.44e-06  *best*  20s
+epoch 13  train loss 0.4343  val loss 0.4786  L1 0.1281  LPIPS 0.3505  PSNR 20.96  lr 9.32e-06  *best*  19s
+epoch 14  train loss 0.4375  val loss 0.4785  L1 0.1281  LPIPS 0.3504  PSNR 20.97  lr 9.18e-06  *best*  19s
+epoch 15  train loss 0.4365  val loss 0.4785  L1 0.1281  LPIPS 0.3505  PSNR 20.97  lr 9.03e-06    19s
+epoch 16  train loss 0.4343  val loss 0.4785  L1 0.1281  LPIPS 0.3504  PSNR 20.97  lr 8.88e-06    19s
+epoch 17  train loss 0.4350  val loss 0.4785  L1 0.1281  LPIPS 0.3504  PSNR 20.96  lr 8.71e-06  *best*  20s
+epoch 18  train loss 0.4417  val loss 0.4784  L1 0.1281  LPIPS 0.3502  PSNR 20.96  lr 8.53e-06  *best*  19s
+epoch 19  train loss 0.4380  val loss 0.4784  L1 0.1282  LPIPS 0.3502  PSNR 20.96  lr 8.34e-06  *best*  19s
+epoch 20  train loss 0.4363  val loss 0.4784  L1 0.1282  LPIPS 0.3503  PSNR 20.96  lr 8.15e-06    19s
+epoch 21  train loss 0.4329  val loss 0.4784  L1 0.1281  LPIPS 0.3503  PSNR 20.96  lr 7.94e-06    19s
+epoch 22  train loss 0.4355  val loss 0.4783  L1 0.1281  LPIPS 0.3502  PSNR 20.96  lr 7.73e-06    19s
+epoch 23  train loss 0.4371  val loss 0.4783  L1 0.1281  LPIPS 0.3502  PSNR 20.97  lr 7.51e-06    19s
+epoch 24  train loss 0.4411  val loss 0.4782  L1 0.1280  LPIPS 0.3503  PSNR 20.97  lr 7.29e-06    19s
+epoch 25  train loss 0.4353  val loss 0.4782  L1 0.1280  LPIPS 0.3502  PSNR 20.97  lr 7.06e-06    19s
+epoch 26  train loss 0.4381  val loss 0.4780  L1 0.1280  LPIPS 0.3500  PSNR 20.97  lr 6.82e-06  *best*  20s
+epoch 27  train loss 0.4356  val loss 0.4778  L1 0.1280  LPIPS 0.3499  PSNR 20.97  lr 6.58e-06  *best*  19s
+epoch 28  train loss 0.4324  val loss 0.4778  L1 0.1279  LPIPS 0.3499  PSNR 20.97  lr 6.34e-06  *best*  19s
+epoch 29  train loss 0.4322  val loss 0.4777  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 6.10e-06  *best*  19s
+epoch 30  train loss 0.4334  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 5.85e-06  *best*  19s
+epoch 31  train loss 0.4372  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 5.61e-06    19s
+epoch 32  train loss 0.4375  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 5.36e-06  *best*  19s
+epoch 33  train loss 0.4360  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 5.11e-06  *best*  19s
+epoch 34  train loss 0.4326  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 4.87e-06    19s
+epoch 35  train loss 0.4402  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 4.62e-06  *best*  19s
+epoch 36  train loss 0.4364  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 4.38e-06  *best*  19s
+epoch 37  train loss 0.4456  val loss 0.4776  L1 0.1278  LPIPS 0.3498  PSNR 20.98  lr 4.14e-06  *best*  19s
+epoch 38  train loss 0.4366  val loss 0.4775  L1 0.1278  LPIPS 0.3497  PSNR 20.98  lr 3.91e-06  *best*  20s
+epoch 39  train loss 0.4361  val loss 0.4775  L1 0.1278  LPIPS 0.3497  PSNR 20.98  lr 3.68e-06  *best*  20s
+epoch 40  train loss 0.4369  val loss 0.4775  L1 0.1278  LPIPS 0.3497  PSNR 20.98  lr 3.46e-06    19s
+epoch 41  train loss 0.4369  val loss 0.4775  L1 0.1278  LPIPS 0.3497  PSNR 20.98  lr 3.24e-06    19s
+epoch 42  train loss 0.4349  val loss 0.4774  L1 0.1277  LPIPS 0.3497  PSNR 20.98  lr 3.03e-06  *best*  19s
+epoch 43  train loss 0.4341  val loss 0.4774  L1 0.1277  LPIPS 0.3497  PSNR 20.98  lr 2.83e-06    19s
+epoch 44  train loss 0.4417  val loss 0.4774  L1 0.1277  LPIPS 0.3497  PSNR 20.99  lr 2.63e-06    19s
+epoch 45  train loss 0.4419  val loss 0.4774  L1 0.1277  LPIPS 0.3497  PSNR 20.99  lr 2.45e-06  *best*  19s
+epoch 46  train loss 0.4342  val loss 0.4774  L1 0.1277  LPIPS 0.3497  PSNR 20.99  lr 2.27e-06    19s
+epoch 47  train loss 0.4347  val loss 0.4774  L1 0.1277  LPIPS 0.3497  PSNR 20.99  lr 2.10e-06    19s
+epoch 48  train loss 0.4376  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.94e-06    19s
+epoch 49  train loss 0.4397  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.80e-06    19s
+epoch 50  train loss 0.4398  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.66e-06    19s
+epoch 51  train loss 0.4363  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.54e-06    19s
+epoch 52  train loss 0.4343  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.43e-06    19s
+epoch 53  train loss 0.4361  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.33e-06    19s
+epoch 54  train loss 0.4390  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.24e-06    19s
+epoch 55  train loss 0.4414  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.17e-06  *best*  20s
+epoch 56  train loss 0.4400  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.11e-06    19s
+epoch 57  train loss 0.4404  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.06e-06    19s
+epoch 58  train loss 0.4413  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.03e-06    19s
+epoch 59  train loss 0.4349  val loss 0.4773  L1 0.1276  LPIPS 0.3497  PSNR 20.99  lr 1.01e-06    19s
+epoch 60  train loss 0.4365  val loss 0.4773  L1 0.1275  LPIPS 0.3497  PSNR 20.99  lr 1.00e-06    19s
+best epoch 55  val lpips 0.3497  -> outputs/finetune_decoder/encoder_coco2art_60ep/checkpoints/best_encoder.pt

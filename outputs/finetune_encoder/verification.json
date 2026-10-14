@@ -1,0 +1,8 @@
+{
+  "device": "NVIDIA GeForce RTX 3080 Ti Laptop GPU",
+  "batch_size": 4,
+  "loss": 0.530764102935791,
+  "encoder_changed": true,
+  "decoder_unchanged": true,
+  "decoder_gradients_absent": true
+}

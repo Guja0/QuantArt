@@ -1,0 +1,27 @@
+{
+  "best_epoch": 1,
+  "select_metric": "lpips",
+  "best_val": 0.38121346235275266,
+  "history": [
+    {
+      "epoch": 0,
+      "train_loss": null,
+      "train_l1": null,
+      "train_lpips": null,
+      "val_loss": 0.5582096993923187,
+      "val_l1": 0.17699109464883805,
+      "val_lpips": 0.38121859431266786,
+      "val_psnr": 18.401638412475585
+    },
+    {
+      "epoch": 1,
+      "train_loss": 0.43930575251579285,
+      "train_l1": 0.1395362913608551,
+      "train_lpips": 0.29976946115493774,
+      "val_loss": 0.5581785321235657,
+      "val_l1": 0.17696506530046463,
+      "val_lpips": 0.38121346235275266,
+      "val_psnr": 18.402622413635253
+    }
+  ]
+}

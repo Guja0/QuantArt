@@ -1,0 +1,15 @@
+{
+  "config": "configs/coco2art.yaml",
+  "ckpt": "../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt",
+  "decoder": "outputs/finetune_decoder/cu_art_coco2art_smoke/checkpoints/last_decoder.pt",
+  "content": [
+    "imgs/content/1.jpg",
+    "imgs/content/2.jpg"
+  ],
+  "style": [
+    "../datasets/CU_data_jpg/IMG_0480.jpg"
+  ],
+  "out": "outputs/finetune_decoder/cu_art_coco2art_smoke/photo_check",
+  "size": 256,
+  "device": "cuda"
+}
