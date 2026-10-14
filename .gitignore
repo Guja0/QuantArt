@@ -7,6 +7,7 @@ __pycache__/
 *.ckpt
 *.pt
 *.pth
+*.log
 !taming/modules/autoencoder/lpips/vgg.pth
 landscape2art/
 landscape2art_continuous/
@@ -23,8 +24,8 @@ imgs_*/
 logs/*
 !logs/.gitignore
 
-# Publish output results; keep TensorBoard logs local.
-# Checkpoint .pt files are excluded by the global rule above.
-outputs/**/tensorboard/
-outputs/**/tensorboard.log
-events.out.tfevents.*
+# Keep training artifacts local; publish style-transfer results.
+outputs/*
+!outputs/style_transfer/
+
+
