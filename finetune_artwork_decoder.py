@@ -275,14 +275,23 @@ def warmup_cosine(warmup_steps, total_steps, min_ratio):
 
 
 @torch.no_grad()
+def detail(x):
+    """Per-image high-frequency energy: mean |Laplacian| of the luminance."""
+    y = x.mean(1, keepdim=True)
+    k = torch.tensor([[0.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 0.0]], device=x.device).view(1, 1, 3, 3)
+    return F.conv2d(y, k).abs().flatten(1).mean(1)
+
+
 def evaluate(model, loader, device, lpips=None, perceptual_weight=0.0):
     model.eval()
-    sums, n = {"loss": 0.0, "l1": 0.0, "lpips": 0.0, "psnr": 0.0}, 0
+    sums, n = {"loss": 0.0, "l1": 0.0, "lpips": 0.0, "psnr": 0.0, "sharpness": 0.0}, 0
     for x, _ in loader:
         x = x.to(device)
         x_hat = model.decode(model.encode(x))
         loss, l1, p = reconstruction_loss(x_hat, x, lpips, perceptual_weight)
-        for k, v in (("loss", loss), ("l1", l1), ("lpips", p), ("psnr", psnr(x_hat, x))):
+        # sharpness: detail kept relative to the input (1 = as much texture as the painting; L1 blur pushes it down)
+        sharp = detail(x_hat.clamp(-1, 1)) / detail(x).clamp_min(1e-6)
+        for k, v in (("loss", loss), ("l1", l1), ("lpips", p), ("psnr", psnr(x_hat, x)), ("sharpness", sharp)):
             sums[k] += v.sum().item()
         n += x.shape[0]
     return {k: v / n for k, v in sums.items()}
@@ -450,7 +459,8 @@ def main():
     vis_base = reconstruct(model, vis_x, device)
     save_pairs(os.path.join(run_dir, "baseline"), vis_names, vis_x, vis_base)
     base = evaluate(model, val_loader, device, lpips, w)
-    print(f"baseline  val loss {base['loss']:.4f}  L1 {base['l1']:.4f}  LPIPS {base['lpips']:.4f}  PSNR {base['psnr']:.2f}")
+    print(f"baseline  val loss {base['loss']:.4f}  L1 {base['l1']:.4f}  LPIPS {base['lpips']:.4f}  PSNR {base['psnr']:.2f}"
+          f"  sharpness {base['sharpness']:.2f}")
     log_val(base, 0)
     writer.add_image("val/input_baseline", grid(vis_x, vis_base), 0)
 
@@ -458,6 +468,7 @@ def main():
                 **{f"val_{k}": v for k, v in base.items()}}]
     sel = opt.select_metric
     best_val, best_epoch, bad_epochs, prev_train = base[sel], 0, 0, None
+    gan_selection_started = disc is None
     save_decoder("best_decoder.pt")
 
     def write_history():
@@ -533,17 +544,22 @@ def main():
 
         # Model selection and early stopping use --select_metric on validation (LPIPS by default:
         # loss values of runs with different weights are not comparable, and L1 rewards blur).
-        improved = val[sel] < best_val
+        # With the GAN on, only epochs that end after it entered the loss compete for best_*.pt, and early
+        # stopping waits for it too: pre-GAN epochs usually win on LPIPS but are the blurry ones.
+        gan_phase = disc is None or step > opt.disc_start
+        if gan_phase and not gan_selection_started:
+            gan_selection_started, best_val, bad_epochs = True, float("inf"), 0
+        improved = gan_phase and val[sel] < best_val
         if improved:
             best_val, best_epoch, bad_epochs = val[sel], epoch, 0
             save_decoder("best_decoder.pt")
-        elif prev_train is not None and train["loss"] < prev_train:
+        elif gan_phase and prev_train is not None and train["loss"] < prev_train:
             bad_epochs += 1
         prev_train = train["loss"]
         history.append({"epoch": epoch, **{f"train_{k}": v for k, v in train.items()},
                         **{f"val_{k}": v for k, v in val.items()}})
         print(f"epoch {epoch:2d}  train loss {train['loss']:.4f}  val loss {val['loss']:.4f}"
-              f"  L1 {val['l1']:.4f}  LPIPS {val['lpips']:.4f}  PSNR {val['psnr']:.2f}"
+              f"  L1 {val['l1']:.4f}  LPIPS {val['lpips']:.4f}  PSNR {val['psnr']:.2f}  sharp {val['sharpness']:.2f}"
               f"  lr {optimizer.param_groups[0]['lr']:.2e}  {'*best*' if improved else ''}  {time.time()-t0:.0f}s")
         write_history()
         if part == "encoder":
