@@ -34,6 +34,24 @@ tensorboard --logdir outputs/finetune_decoder
 
 By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture. Those runs used 10 epochs at lr 3e-6 (about 350 steps), fixed 288 px crops and no EMA or GAN; the closest equivalent now is `--epochs 10 --lr 3e-6 --min_lr_ratio 1 --warmup_steps 0 --scale_max 1.125 --ema 0 --select_metric loss --patience 2` (crops are now drawn from 256–288 px instead of always 288 px).
 
+## Encoder-only experiment with a frozen fine-tuned decoder
+
+The `encoder_coco2art_60ep` experiment trains `encoder_real` and `quant_conv_real` for 60 epochs while keeping the existing 60-epoch artwork decoder and `post_quant_conv` fixed. It uses the 140/20 train/validation split, L1 + LPIPS, EMA, and no early stopping during those 60 epochs. TensorBoard at http://localhost:6006 shows this run's `train/*`, `val/*`, and `val/input_baseline_current` images (rows: input, initial reconstruction, current reconstruction).
+
+From `QuantArt`, the equivalent command is:
+
+```bash
+.venv/bin/python -u finetune_artwork_decoder.py \
+  --config configs/coco2art.yaml \
+  --ckpt ../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt \
+  --decoder outputs/finetune_decoder/dev_coco2art_60ep/checkpoints/last_decoder.pt \
+  --data ../datasets/CU_data_jpg --split datasets/CU_data_split \
+  --train_part encoder --run encoder_coco2art_60ep \
+  --epochs 60 --patience 61 --batch_size 4 --device cuda
+```
+
+Do not start this command again while the existing background run is active. Its console log is `outputs/finetune_decoder/encoder_coco2art_60ep.log`. The run saves `best_encoder.pt`, a per-epoch `last_encoder.pt`, and the exact `frozen_decoder.pt` needed with those encoder exports. The existing decoder files are not modified. A one-batch GPU check recorded in `outputs/finetune_encoder/verification.json` verified encoder updates, absent decoder gradients, and bit-identical frozen decoder weights.
+
 ## Photo-to-art inference with the 60-epoch dev decoder
 
 `stylize_pair.py` runs the complete continuous QuantArt pipeline with your fine-tuned artwork decoder. It accepts JPEG/PNG and HEIC images (`pillow-heif` is included in `requirements-train.txt`). Both inputs are resized and edge-padded to matching square canvases, as required by this branch's cross-attention; padding is removed from the saved photo output. The default canvas is 512×512, preserving the original composition and aspect ratio at reduced resolution.

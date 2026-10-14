@@ -313,6 +313,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="landscape2art/configs/test.yaml")
     parser.add_argument("--ckpt", default="landscape2art/checkpoints/last.ckpt")
+    parser.add_argument("--decoder", default=None,
+                        help="Optional exported decoder weights to load before training, e.g. a previously fine-tuned decoder")
     parser.add_argument("--data", default="datasets/CU_data_jpg")
     parser.add_argument("--split", default="datasets/CU_data_split")
     parser.add_argument("--out", default="outputs/finetune_decoder")
@@ -372,6 +374,12 @@ def main():
     print(f"train {len(train_set)}  val {len(val_set)}")
 
     model = ContinuousArtworkAE.from_checkpoint(opt.config, opt.ckpt).to(device)
+    if opt.decoder:
+        decoder_sd = torch.load(opt.decoder, map_location="cpu", weights_only=True)
+        if set(decoder_sd) != set(model.decoder_state_dict()):
+            parser.error("--decoder must contain exactly post_quant_conv and decoder weights")
+        model.load_state_dict(decoder_sd, strict=False)
+        print(f"Loaded decoder: {opt.decoder}")
     if device.type == "mps":
         patch_for_mps(model.decoder)
         if opt.train_part == "encoder":
@@ -427,6 +435,9 @@ def main():
             writer.add_scalar(f"val/{k}", v, epoch)
 
     part = opt.train_part
+    if part == "encoder":
+        # Preserve the exact frozen decoder needed to reconstruct with encoder exports.
+        torch.save(model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", "frozen_decoder.pt"))
 
     def save_decoder(name):
         # Saves the trained part only: *_decoder.pt (decoder side) or *_encoder.pt (encoder side).
@@ -535,6 +546,8 @@ def main():
               f"  L1 {val['l1']:.4f}  LPIPS {val['lpips']:.4f}  PSNR {val['psnr']:.2f}"
               f"  lr {optimizer.param_groups[0]['lr']:.2e}  {'*best*' if improved else ''}  {time.time()-t0:.0f}s")
         write_history()
+        if part == "encoder":
+            save_decoder("last_decoder.pt")
         if bad_epochs >= opt.patience:
             print(f"early stop: train improving while val worse than best for {bad_epochs} epochs")
             break
