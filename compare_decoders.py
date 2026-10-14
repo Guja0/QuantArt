@@ -88,8 +88,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="landscape2art/configs/test.yaml")
     parser.add_argument("--ckpt", default="landscape2art/checkpoints/last.ckpt")
-    parser.add_argument("--run", required=True, help="fine-tuning run dir (contains checkpoints/best_decoder.pt)")
-    parser.add_argument("--decoder", default=None, help="adapted decoder weights (default: <run>/checkpoints/best_decoder.pt)")
+    parser.add_argument("--run", required=True,
+                        help="fine-tuning run dir (contains checkpoints/best_decoder.pt or best_encoder.pt)")
+    parser.add_argument("--decoder", "--weights", dest="weights", default=None,
+                        help="adapted weights, decoder or encoder side "
+                             "(default: <run>/checkpoints/best_decoder.pt, else best_encoder.pt)")
     parser.add_argument("--data", default="datasets/CU_data_jpg")
     parser.add_argument("--split", default="datasets/CU_data_split")
     parser.add_argument("--content", nargs="+", default=DEFAULT_CONTENT)
@@ -99,13 +102,21 @@ def main():
 
     device = pick_device(opt.device)
     out = os.path.join(opt.run, "comparison")
-    adapted_sd = torch.load(opt.decoder or os.path.join(opt.run, "checkpoints", "best_decoder.pt"), map_location="cpu",
-                            weights_only=True)
+    weights = opt.weights
+    if weights is None:
+        for name in ("best_decoder.pt", "best_encoder.pt"):
+            if os.path.exists(os.path.join(opt.run, "checkpoints", name)):
+                weights = os.path.join(opt.run, "checkpoints", name)
+                break
+    adapted_sd = torch.load(weights, map_location="cpu", weights_only=True)
+    print(f"adapted weights: {weights} ({len(adapted_sd)} tensors, "
+          f"{'encoder' if any(k.startswith('encoder_real.') for k in adapted_sd) else 'decoder'} side)")
 
     # ---- 1. test reconstruction --------------------------------------------------
     test_set = ArtworkDataset(opt.data, os.path.join(opt.split, "test.txt"))
     ae = ContinuousArtworkAE.from_checkpoint(opt.config, opt.ckpt).to(device).eval()
-    original_sd = {k: v.clone() for k, v in ae.decoder_state_dict().items()}
+    # Original values of exactly the tensors the run adapted (decoder side or encoder side).
+    original_sd = {k: ae.state_dict()[k].clone() for k in adapted_sd}
     x = torch.stack([test_set[i][0] for i in range(len(test_set))])
     names = [os.path.splitext(n)[0] for n in test_set.names]
     recs = {}
@@ -147,11 +158,13 @@ def main():
     content_names = [os.path.splitext(os.path.basename(p))[0] for p in opt.content]
     st_rows, outputs = [], {}
     for tag, sd in (("original", original_sd), ("adapted", adapted_sd)):
-        qa.decoder.load_state_dict({k[len("decoder."):]: v for k, v in sd.items() if k.startswith("decoder.")})
-        qa.post_quant_conv.load_state_dict({k[len("post_quant_conv."):]: v for k, v in sd.items()
-                                            if k.startswith("post_quant_conv.")})
+        unexpected = qa.load_state_dict(sd, strict=False).unexpected_keys
+        assert not unexpected, f"weights do not match the QuantArt model: {unexpected[:3]}"
         outputs[tag] = torch.stack([torch.stack([qa.transfer(c[None].to(device), s[None].to(device))[0].cpu()
                                                  for s in styles]) for c in contents])  # [C, S, 3, H, W]
+    # Metrics below use the original encoders, so the yardstick is the same for both outputs
+    # (matters when the run adapted the artwork encoder).
+    qa.load_state_dict(original_sd, strict=False)
     for ci, cn in enumerate(content_names):
         for si, sn in enumerate(style_names):
             ref, content = styles[si:si + 1].to(device), contents[ci:ci + 1].to(device)

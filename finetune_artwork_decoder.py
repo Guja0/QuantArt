@@ -3,6 +3,8 @@
 Path (no codebook):  x -> encoder_real -> quant_conv_real -> post_quant_conv -> decoder -> x_hat
 Frozen (eval mode):   encoder_real, quant_conv_real
 Trained:              post_quant_conv, decoder (or only the modules given with --train_layers)
+                      With --train_part encoder it is reversed: post_quant_conv + decoder are frozen
+                      and encoder_real + quant_conv_real are trained (checkpoints: *_encoder.pt).
 Loss:                 L1(x_hat, x) + perceptual_weight * LPIPS(x_hat, x), where x is the same
                       augmented image that was fed to the encoder (perceptual_weight=0: L1 only),
                       + optionally a PatchGAN hinge loss with taming's adaptive weight (--disc_weight > 0).
@@ -137,6 +139,25 @@ class ContinuousArtworkAE(torch.nn.Module):
     def decoder_state_dict(self):
         return {k: v for k, v in self.state_dict().items() if k.startswith(DECODER_PREFIXES)}
 
+    def encoder_state_dict(self):
+        return {k: v for k, v in self.state_dict().items() if k.startswith(ENCODER_PREFIXES)}
+
+    def freeze_decoder(self):
+        for m in (self.post_quant_conv, self.decoder):
+            m.eval()
+            for p in m.parameters():
+                p.requires_grad_(False)
+
+    def encoder_parameters(self):
+        return list(self.encoder_real.parameters()) + list(self.quant_conv_real.parameters())
+
+    def set_train_mode(self, part):
+        """Train mode only for the part being trained; the frozen part stays in eval mode."""
+        trained = (self.encoder_real, self.quant_conv_real) if part == "encoder" else (self.post_quant_conv, self.decoder)
+        self.eval()
+        for m in trained:
+            m.train()
+
     def freeze_encoder(self):
         for m in (self.encoder_real, self.quant_conv_real):
             m.eval()
@@ -255,7 +276,7 @@ def warmup_cosine(warmup_steps, total_steps, min_ratio):
 
 @torch.no_grad()
 def evaluate(model, loader, device, lpips=None, perceptual_weight=0.0):
-    model.decoder.eval()
+    model.eval()
     sums, n = {"loss": 0.0, "l1": 0.0, "lpips": 0.0, "psnr": 0.0}, 0
     for x, _ in loader:
         x = x.to(device)
@@ -269,7 +290,7 @@ def evaluate(model, loader, device, lpips=None, perceptual_weight=0.0):
 
 @torch.no_grad()
 def reconstruct(model, x, device):
-    model.decoder.eval()
+    model.eval()
     return model.decode(model.encode(x.to(device))).cpu()
 
 
@@ -307,6 +328,9 @@ def main():
     parser.add_argument("--min_lr_ratio", type=float, default=0.1, help="cosine decays to lr * this; 1 = constant LR")
     parser.add_argument("--ema", type=float, default=0.999, help="EMA decay of the decoder weights; 0 = off")
     parser.add_argument("--flip_p", type=float, default=0.5)
+    parser.add_argument("--train_part", choices=["decoder", "encoder"], default="decoder",
+                        help="decoder: freeze the encoder, train the decoder (default); "
+                             "encoder: freeze post_quant_conv + decoder, train encoder_real + quant_conv_real")
     parser.add_argument("--train_layers", nargs="+", default=None,
                         help="decoder-side modules to train, e.g. decoder.up.0 decoder.conv_out; "
                              "all other decoder layers are frozen (default: post_quant_conv + whole decoder)")
@@ -350,11 +374,20 @@ def main():
     model = ContinuousArtworkAE.from_checkpoint(opt.config, opt.ckpt).to(device)
     if device.type == "mps":
         patch_for_mps(model.decoder)
-    model.freeze_encoder()
-    params = model.decoder_parameters(opt.train_layers)
+        if opt.train_part == "encoder":
+            patch_for_mps(model.encoder_real)
+    if opt.train_part == "encoder":
+        if opt.train_layers:
+            parser.error("--train_layers selects decoder layers; it cannot be combined with --train_part encoder")
+        model.freeze_decoder()
+        params = model.encoder_parameters()
+        print("train part: encoder_real + quant_conv_real (post_quant_conv + decoder frozen)")
+    else:
+        model.freeze_encoder()
+        params = model.decoder_parameters(opt.train_layers)
+        print(f"train part: decoder, layers: {opt.train_layers or 'post_quant_conv + whole decoder'}")
     n_train = sum(p.numel() for p in params)
     n_frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-    print(f"train layers: {opt.train_layers or 'post_quant_conv + whole decoder'}")
     print(f"trainable {n_train/1e6:.2f}M  frozen {n_frozen/1e6:.2f}M")
     optimizer = torch.optim.Adam(params, lr=opt.lr, betas=(0.5, 0.9))
     steps_per_epoch = len(train_loader) if not opt.max_steps else min(opt.max_steps, len(train_loader))
@@ -362,7 +395,7 @@ def main():
         optimizer, warmup_cosine(opt.warmup_steps, opt.epochs * steps_per_epoch, opt.min_lr_ratio))
     print(f"{steps_per_epoch} steps/epoch, {opt.epochs * steps_per_epoch} steps max, peak lr {opt.lr}")
 
-    # The EMA copy shares the frozen encoder; validation, samples and checkpoints use it.
+    # The EMA copy holds the frozen part unchanged; validation, samples and checkpoints use it.
     ema_model = None
     if opt.ema > 0:
         ema_model = copy.deepcopy(model)
@@ -393,10 +426,14 @@ def main():
         for k, v in metrics.items():
             writer.add_scalar(f"val/{k}", v, epoch)
 
-    def save_decoder(name):
-        torch.save(eval_model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", name))
+    part = opt.train_part
 
-    # Baseline: pretrained decoder on a fixed set of val images.
+    def save_decoder(name):
+        # Saves the trained part only: *_decoder.pt (decoder side) or *_encoder.pt (encoder side).
+        sd = eval_model.encoder_state_dict() if part == "encoder" else eval_model.decoder_state_dict()
+        torch.save(sd, os.path.join(run_dir, "checkpoints", name.replace("decoder", part)))
+
+    # Baseline: pretrained autoencoder on a fixed set of val images.
     vis = [val_set[i] for i in range(min(opt.n_baseline, len(val_set)))]
     vis_x, vis_names = torch.stack([v[0] for v in vis]), [v[1] for v in vis]
     vis_base = reconstruct(model, vis_x, device)
@@ -413,15 +450,17 @@ def main():
     save_decoder("best_decoder.pt")
     step = 0
     for epoch in range(1, opt.epochs + 1):
-        model.decoder.train()
-        model.post_quant_conv.train()
+        model.set_train_mode(part)
         t0, sums, n = time.time(), {"loss": 0.0, "l1": 0.0, "lpips": 0.0}, 0
         for i, (x, _) in enumerate(train_loader):
             if opt.max_steps and i >= opt.max_steps:
                 break
             x = x.to(device)
-            with torch.no_grad():
-                h = model.encode(x)
+            if part == "encoder":
+                h = model.encode(x)          # gradients flow back through the frozen decoder
+            else:
+                with torch.no_grad():
+                    h = model.encode(x)
             x_hat = model.decode(h)
             # target = the same augmented image that went into the encoder
             rec, l1, p = reconstruction_loss(x_hat, x, lpips if w > 0 else None, w)
@@ -497,9 +536,10 @@ def main():
 
     save_decoder("last_decoder.pt")
     if ema_model is not None:
-        torch.save(model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", "last_decoder_raw.pt"))
+        raw = model.encoder_state_dict() if part == "encoder" else model.decoder_state_dict()
+        torch.save(raw, os.path.join(run_dir, "checkpoints", f"last_{part}_raw.pt"))
     writer.close()
-    print(f"best epoch {best_epoch}  val {sel} {best_val:.4f}  -> {run_dir}/checkpoints/best_decoder.pt")
+    print(f"best epoch {best_epoch}  val {sel} {best_val:.4f}  -> {run_dir}/checkpoints/best_{part}.pt")
 
 
 if __name__ == "__main__":
