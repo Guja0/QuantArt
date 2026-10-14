@@ -1,4 +1,7 @@
-"""Run continuous QuantArt photo-to-art transfer with a fine-tuned decoder.
+"""Run continuous QuantArt photo-to-art transfer with a fine-tuned artwork encoder and/or decoder.
+
+--encoder takes encoder_real + quant_conv_real weights (finetune_artwork_decoder.py --train_part encoder),
+--decoder takes post_quant_conv + decoder weights; at least one is required, both can be combined.
 
 HEIC inputs require pillow-heif. Both inputs are resized and edge-padded to the
 same square for QuantArt's cross-attention; output padding is removed afterward.
@@ -12,7 +15,7 @@ from PIL import Image, ImageOps
 import torch
 
 from compare_decoders import ContinuousQuantArt
-from finetune_artwork_decoder import DECODER_PREFIXES, pick_device, to_image, to_tensor
+from finetune_artwork_decoder import DECODER_PREFIXES, ENCODER_PREFIXES, pick_device, to_image, to_tensor
 
 
 def load_image(path):
@@ -38,13 +41,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--ckpt", required=True)
-    parser.add_argument("--decoder", required=True)
+    parser.add_argument("--encoder", default=None, help="fine-tuned encoder_real + quant_conv_real weights (*_encoder.pt)")
+    parser.add_argument("--decoder", default=None, help="fine-tuned post_quant_conv + decoder weights (*_decoder.pt)")
     parser.add_argument("--content", required=True)
     parser.add_argument("--style", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--size", type=int, default=512, help="Square inference canvas, multiple of 16")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
+    if args.encoder is None and args.decoder is None:
+        parser.error("pass --encoder and/or --decoder")
     if args.size < 32 or args.size % 16:
         parser.error("--size must be at least 32 and a multiple of 16")
     device = pick_device(args.device)
@@ -58,12 +64,15 @@ def main():
     qa = ContinuousQuantArt.from_checkpoint(args.config, args.ckpt).to(device).eval().requires_grad_(False)
     with torch.inference_mode():
         original = qa.transfer(x, ref).cpu()[0]
-    state = torch.load(args.decoder, map_location="cpu", weights_only=True)
-    expected = {k for k in qa.state_dict() if k.startswith(DECODER_PREFIXES)}
-    if set(state) != expected:
-        raise ValueError("Decoder checkpoint must contain exactly decoder and post_quant_conv weights")
-    qa.decoder.load_state_dict({k[len("decoder."):]: v for k, v in state.items() if k.startswith("decoder.")}, strict=True)
-    qa.post_quant_conv.load_state_dict({k[len("post_quant_conv."):]: v for k, v in state.items() if k.startswith("post_quant_conv.")}, strict=True)
+    for path, prefixes, what in ((args.encoder, ENCODER_PREFIXES, "encoder_real and quant_conv_real"),
+                                 (args.decoder, DECODER_PREFIXES, "decoder and post_quant_conv")):
+        if path is None:
+            continue
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        expected = {k for k in qa.state_dict() if k.startswith(prefixes)}
+        if set(state) != expected:
+            raise ValueError(f"{path} must contain exactly the {what} weights")
+        qa.load_state_dict(state, strict=False)
     with torch.inference_mode():
         tuned = qa.transfer(x, ref).cpu()[0]
     if not torch.isfinite(original).all() or not torch.isfinite(tuned).all():

@@ -108,6 +108,8 @@ def main():
             if os.path.exists(os.path.join(opt.run, "checkpoints", name)):
                 weights = os.path.join(opt.run, "checkpoints", name)
                 break
+    if weights is None:
+        parser.error(f"no best_decoder.pt or best_encoder.pt in {opt.run}/checkpoints; pass --weights")
     adapted_sd = torch.load(weights, map_location="cpu", weights_only=True)
     print(f"adapted weights: {weights} ({len(adapted_sd)} tensors, "
           f"{'encoder' if any(k.startswith('encoder_real.') for k in adapted_sd) else 'decoder'} side)")

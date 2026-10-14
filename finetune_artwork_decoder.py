@@ -326,7 +326,7 @@ def main():
                         help="peak LR (config base_learning_rate 4.5e-6 x batch 4 = 1.8e-5 in taming)")
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--min_lr_ratio", type=float, default=0.1, help="cosine decays to lr * this; 1 = constant LR")
-    parser.add_argument("--ema", type=float, default=0.999, help="EMA decay of the decoder weights; 0 = off")
+    parser.add_argument("--ema", type=float, default=0.999, help="EMA decay of the trained weights (decoder or encoder side); 0 = off")
     parser.add_argument("--flip_p", type=float, default=0.5)
     parser.add_argument("--train_part", choices=["decoder", "encoder"], default="decoder",
                         help="decoder: freeze the encoder, train the decoder (default); "
@@ -448,6 +448,13 @@ def main():
     sel = opt.select_metric
     best_val, best_epoch, bad_epochs, prev_train = base[sel], 0, 0, None
     save_decoder("best_decoder.pt")
+
+    def write_history():
+        with open(os.path.join(run_dir, "history.json"), "w") as f:
+            json.dump({"best_epoch": best_epoch, "select_metric": sel, "best_val": best_val,
+                       "history": history}, f, indent=2)
+
+    write_history()  # --epochs 0 = baseline only: untouched weights saved, metrics recorded
     step = 0
     for epoch in range(1, opt.epochs + 1):
         model.set_train_mode(part)
@@ -469,7 +476,7 @@ def main():
             if disc is not None and step >= opt.disc_start:
                 disc.requires_grad_(False)
                 g_loss = -disc(diff_augment(x_hat)).mean()
-                d_weight = opt.disc_weight * adaptive_gan_weight(rec, g_loss, last_layer)
+                d_weight = opt.disc_weight * adaptive_gan_weight(rec, g_loss, last_layer)  # encoder: quant_conv_real
                 loss = rec + d_weight * g_loss
                 disc.requires_grad_(True)
                 writer.add_scalar("train/g_loss_step", g_loss.item(), step)
@@ -527,9 +534,7 @@ def main():
         print(f"epoch {epoch:2d}  train loss {train['loss']:.4f}  val loss {val['loss']:.4f}"
               f"  L1 {val['l1']:.4f}  LPIPS {val['lpips']:.4f}  PSNR {val['psnr']:.2f}"
               f"  lr {optimizer.param_groups[0]['lr']:.2e}  {'*best*' if improved else ''}  {time.time()-t0:.0f}s")
-        with open(os.path.join(run_dir, "history.json"), "w") as f:
-            json.dump({"best_epoch": best_epoch, "select_metric": sel, "best_val": best_val,
-                       "history": history}, f, indent=2)
+        write_history()
         if bad_epochs >= opt.patience:
             print(f"early stop: train improving while val worse than best for {bad_epochs} epochs")
             break

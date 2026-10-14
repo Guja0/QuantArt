@@ -51,6 +51,18 @@ From `QuantArt`, run:
 
 The output folder contains `finetuned_quantart.png`, `original_quantart.png`, and `comparison_photo_art_original_finetuned.png` (panels: photo, artwork, original model, fine-tuned model). `run.json` records the checkpoint, input paths, preprocessing, and dimensions. This uses the codebook-free path matching decoder fine-tuning; `last_decoder.pt` contains the EMA decoder saved at epoch 60.
 
+## Encoder-only fine-tuning (decoder frozen)
+
+`finetune_artwork_decoder.py --train_part encoder` freezes `post_quant_conv` + `decoder` and trains `encoder_real` + `quant_conv_real` (checkpoints: `best_encoder.pt`, `last_encoder.pt`). `--epochs 0` saves the untouched weights and baseline metrics without training. `compare_decoders.py` detects encoder checkpoints, and `stylize_pair.py` takes `--encoder` and/or `--decoder`. In style transfer the artwork encoder only encodes the style reference; the photo goes through the photo `encoder`, which stays untouched.
+
+`run_encoder_only.sh` runs the baseline, training, comparison and 512 px stylization in one go:
+
+```bash
+CKPT=../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt bash run_encoder_only.sh
+# smoke test first:
+CKPT=... RUN=enc_smoke EXTRA="--epochs 1 --max_steps 2" bash run_encoder_only.sh
+```
+
 ## 🔴Update (07/20/2025)
 I have fixed all the links to the pretrained models, but I cannot guarantee their weights are 100% correct. Feel free to report any issues!
 
