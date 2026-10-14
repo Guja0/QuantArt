@@ -1,0 +1,44 @@
+127.0.0.1 - - [14/Oct/2026 12:16:56] "GET /latent_explorer.html HTTP/1.1" 200 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 42074)
+Traceback (most recent call last):
+  File "/home/vision1/miniconda3/lib/python3.13/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vision1/miniconda3/lib/python3.13/http/server.py", line 1342, in finish_request
+    self.RequestHandlerClass(request, client_address, self,
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                             directory=args.directory)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/vision1/miniconda3/lib/python3.13/http/server.py", line 683, in __init__
+    super().__init__(*args, **kwargs)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/vision1/miniconda3/lib/python3.13/socketserver.py", line 766, in __init__
+    self.handle()
+    ~~~~~~~~~~~^^
+  File "/home/vision1/miniconda3/lib/python3.13/http/server.py", line 447, in handle
+    self.handle_one_request()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/vision1/miniconda3/lib/python3.13/http/server.py", line 435, in handle_one_request
+    method()
+    ~~~~~~^^
+  File "/home/vision1/miniconda3/lib/python3.13/http/server.py", line 690, in do_GET
+    self.copyfile(f, self.wfile)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "/home/vision1/miniconda3/lib/python3.13/http/server.py", line 892, in copyfile
+    shutil.copyfileobj(source, outputfile)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/vision1/miniconda3/lib/python3.13/shutil.py", line 204, in copyfileobj
+    fdst_write(buf)
+    ~~~~~~~~~~^^^^^
+  File "/home/vision1/miniconda3/lib/python3.13/socketserver.py", line 845, in write
+    self._sock.sendall(b)
+    ~~~~~~~~~~~~~~~~~~^^^
+ConnectionResetError: [Errno 104] Connection reset by peer
+----------------------------------------
+127.0.0.1 - - [14/Oct/2026 12:17:33] "GET /latent_explorer.html HTTP/1.1" 200 -
+127.0.0.1 - - [14/Oct/2026 12:17:34] code 404, message File not found
+127.0.0.1 - - [14/Oct/2026 12:17:34] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [14/Oct/2026 12:17:50] "GET /latent_explorer.html HTTP/1.1" 200 -
+127.0.0.1 - - [14/Oct/2026 12:17:51] code 404, message File not found
+127.0.0.1 - - [14/Oct/2026 12:17:51] "GET /favicon.ico HTTP/1.1" 404 -

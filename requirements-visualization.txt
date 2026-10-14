@@ -1,0 +1,4 @@
+# Additional dependencies for visualize_artwork_latents.py (use the training environment).
+scikit-learn>=1.5
+matplotlib>=3.8
+plotly>=5

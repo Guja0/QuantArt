@@ -1,0 +1,210 @@
+{
+  "settings": {
+    "config": "configs/coco2art.yaml",
+    "ckpt": "../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt",
+    "data": "../datasets/CU_data_jpg",
+    "runs": "outputs/finetune_decoder",
+    "out": "outputs/latent_visualization",
+    "device": "cuda",
+    "size": 256,
+    "batch_size": 8,
+    "clusters": 6
+  },
+  "image_count": 180,
+  "models": [
+    {
+      "id": "baseline",
+      "label": "Baseline coco2art",
+      "run": null,
+      "weights": null,
+      "epochs": 0,
+      "group": "encoder_0",
+      "encoder_sha256": "d3f674c0bce63c50be1fd2e3e9b4dc651a0071dcf2853008683a70a2e4458a4b"
+    },
+    {
+      "id": "cu_art_coco2art_100ep_last",
+      "label": "cu_art_coco2art_100ep / last / epoch 87",
+      "run": "outputs/finetune_decoder/cu_art_coco2art_100ep",
+      "weights": "outputs/finetune_decoder/cu_art_coco2art_100ep/checkpoints/last_decoder.pt",
+      "epochs": 87,
+      "part": "decoder",
+      "group": "encoder_0",
+      "encoder_sha256": "d3f674c0bce63c50be1fd2e3e9b4dc651a0071dcf2853008683a70a2e4458a4b"
+    },
+    {
+      "id": "cu_art_coco2art_smoke_last",
+      "label": "cu_art_coco2art_smoke / last / epoch 1",
+      "run": "outputs/finetune_decoder/cu_art_coco2art_smoke",
+      "weights": "outputs/finetune_decoder/cu_art_coco2art_smoke/checkpoints/last_decoder.pt",
+      "epochs": 1,
+      "part": "decoder",
+      "group": "encoder_0",
+      "encoder_sha256": "d3f674c0bce63c50be1fd2e3e9b4dc651a0071dcf2853008683a70a2e4458a4b"
+    },
+    {
+      "id": "dev_coco2art_60ep_last",
+      "label": "dev_coco2art_60ep / last / epoch 60",
+      "run": "outputs/finetune_decoder/dev_coco2art_60ep",
+      "weights": "outputs/finetune_decoder/dev_coco2art_60ep/checkpoints/last_decoder.pt",
+      "epochs": 60,
+      "part": "decoder",
+      "group": "encoder_0",
+      "encoder_sha256": "d3f674c0bce63c50be1fd2e3e9b4dc651a0071dcf2853008683a70a2e4458a4b"
+    },
+    {
+      "id": "dev_cuda_compat_check_last",
+      "label": "dev_cuda_compat_check / last / epoch 1",
+      "run": "outputs/finetune_decoder/dev_cuda_compat_check",
+      "weights": "outputs/finetune_decoder/dev_cuda_compat_check/checkpoints/last_decoder.pt",
+      "epochs": 1,
+      "part": "decoder",
+      "group": "encoder_0",
+      "encoder_sha256": "d3f674c0bce63c50be1fd2e3e9b4dc651a0071dcf2853008683a70a2e4458a4b"
+    },
+    {
+      "id": "encoder_coco2art_60ep_last",
+      "label": "encoder_coco2art_60ep / last / epoch 60",
+      "run": "outputs/finetune_decoder/encoder_coco2art_60ep",
+      "weights": "outputs/finetune_decoder/encoder_coco2art_60ep/checkpoints/last_encoder.pt",
+      "epochs": 60,
+      "part": "encoder",
+      "group": "encoder_1",
+      "encoder_sha256": "e5805464818b9daf1255a8444b4f06b7b1b4a0fdadd9129be863294572150139"
+    },
+    {
+      "id": "encoder_coco2art_60ep_best",
+      "label": "encoder_coco2art_60ep / best / epoch 55",
+      "run": "outputs/finetune_decoder/encoder_coco2art_60ep",
+      "weights": "outputs/finetune_decoder/encoder_coco2art_60ep/checkpoints/best_encoder.pt",
+      "epochs": 55,
+      "part": "encoder",
+      "group": "encoder_2",
+      "encoder_sha256": "d61164864718653be87c592ef8af3cc3a76d3aa8f35eb4f147cec8b0b0e01044"
+    },
+    {
+      "id": "encoder_coco2art_60ep_last_raw",
+      "label": "encoder_coco2art_60ep / last_raw / epoch 60",
+      "run": "outputs/finetune_decoder/encoder_coco2art_60ep",
+      "weights": "outputs/finetune_decoder/encoder_coco2art_60ep/checkpoints/last_encoder_raw.pt",
+      "epochs": 60,
+      "part": "encoder",
+      "group": "encoder_3",
+      "encoder_sha256": "a10f9d5a09c9b8c591c8245b92954736477a958ca2783c3005f53c15836fee9c"
+    }
+  ],
+  "distinct_encoders": 4,
+  "analysis": {
+    "statistics": {
+      "pca_variance_first_two": 0.6159363389015198,
+      "pca_variance_first_50": 0.9995846152305603,
+      "baseline_silhouette": 0.16674210131168365,
+      "groups": {
+        "encoder_0": {
+          "neighbor_overlap_with_baseline": 1.0,
+          "cluster_counts": [
+            19,
+            28,
+            36,
+            27,
+            29,
+            41
+          ]
+        },
+        "encoder_1": {
+          "neighbor_overlap_with_baseline": 0.9354166666666667,
+          "cluster_counts": [
+            19,
+            28,
+            36,
+            27,
+            30,
+            40
+          ]
+        },
+        "encoder_2": {
+          "neighbor_overlap_with_baseline": 0.9368055555555556,
+          "cluster_counts": [
+            19,
+            28,
+            36,
+            27,
+            30,
+            40
+          ]
+        },
+        "encoder_3": {
+          "neighbor_overlap_with_baseline": 0.9333333333333333,
+          "cluster_counts": [
+            19,
+            28,
+            36,
+            27,
+            30,
+            40
+          ]
+        }
+      }
+    },
+    "gram": {
+      "pca_variance_first_two": 0.5526949167251587,
+      "pca_variance_first_50": 0.9989460110664368,
+      "baseline_silhouette": 0.13143590092658997,
+      "groups": {
+        "encoder_0": {
+          "neighbor_overlap_with_baseline": 1.0,
+          "cluster_counts": [
+            35,
+            25,
+            32,
+            31,
+            17,
+            40
+          ]
+        },
+        "encoder_1": {
+          "neighbor_overlap_with_baseline": 0.8708333333333333,
+          "cluster_counts": [
+            35,
+            26,
+            32,
+            30,
+            17,
+            40
+          ]
+        },
+        "encoder_2": {
+          "neighbor_overlap_with_baseline": 0.8694444444444445,
+          "cluster_counts": [
+            35,
+            26,
+            31,
+            30,
+            17,
+            41
+          ]
+        },
+        "encoder_3": {
+          "neighbor_overlap_with_baseline": 0.8715277777777778,
+          "cluster_counts": [
+            35,
+            26,
+            32,
+            30,
+            17,
+            40
+          ]
+        }
+      }
+    }
+  },
+  "notes": [
+    "Descriptors use pre-codebook artwork-encoder latents; decoder-only changes cannot alter them.",
+    "Images are resized and edge-padded to 256px; pooling masks padding, but convolution boundary effects remain.",
+    "All unique encoders share one fitted PCA and one joint t-SNE per descriptor.",
+    "Clusters are fitted on baseline PCA-50 features and assigned to other encoders with those same centers.",
+    "Gram correlations and pooled statistics are heuristic appearance descriptors; no medium or brushstroke labels are available.",
+    "No claim that fine-tuning improves semantic clustering; neighbors are computed from original normalized descriptors.",
+    "All artwork images are exploratory, including train/validation/test and near-duplicates.",
+    "Museum photos, wall labels, composition, palette, lighting and frames can influence groups."
+  ]
+}

@@ -34,6 +34,26 @@ tensorboard --logdir outputs/finetune_decoder
 
 By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture. Those runs used 10 epochs at lr 3e-6 (about 350 steps), fixed 288 px crops and no EMA or GAN; the closest equivalent now is `--epochs 10 --lr 3e-6 --min_lr_ratio 1 --warmup_steps 0 --scale_max 1.125 --ema 0 --select_metric loss --patience 2` (crops are now drawn from 256–288 px instead of always 288 px).
 
+## Artwork latent-space comparisons
+
+The baseline and every completed fine-tuning run are compared in `outputs/latent_visualization/latent_explorer.html`. This standalone HTML includes image thumbnails, shared PCA and joint t-SNE maps, model selectors, six baseline-anchored appearance groups, and eight nearest neighbors for each artwork. Choose the right-hand model, click a point, and inspect the nearest-image cards or group gallery. Turn on the thumbnail overlay to see paintings directly on the map.
+
+Two descriptors are available: latent Gram channel correlations (appearance/texture) and channel means/standard deviations. All 180 artworks use identical full-image resize/padding to 256 pixels. Padding is masked when pooling descriptors. Decoder-only models retain the same encoder and therefore have identical latents; encoder epoch 60, best epoch 55, and raw epoch 60 are distinct comparisons. All unique encoders share the fitted projections; neighbors are computed in the original normalized descriptor space, not the 2D map.
+
+These are exploratory appearance groups, not verified oil/acrylic or brushstroke classifications. The six-group choice is a display default. Palette, composition, frames, photographed lighting, museum labels, and duplicate artworks can affect groups. A well-separated-looking t-SNE plot does not establish semantic clustering or improvement from fine-tuning. True medium/brushstroke grouping requires labels to evaluate against.
+
+Run from `QuantArt`:
+
+```bash
+.venv/bin/python -m pip install -r requirements-visualization.txt
+.venv/bin/python -u visualize_artwork_latents.py \
+  --config configs/coco2art.yaml \
+  --ckpt ../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt \
+  --data ../datasets/CU_data_jpg --device cuda
+```
+
+The output folder also contains `baseline_vs_encoder_pca.png`, representative-image contact sheets under `clusters/`, `coordinates_and_neighbors.csv`, `latent_descriptors_and_coordinates.npz`, and `summary.json` with checkpoint hashes, preprocessing, projection variance, group sizes, and nearest-neighbor overlap. The explorer embeds Plotly and thumbnails, so it works offline without external assets.
+
 ## Encoder-only experiment with a frozen fine-tuned decoder
 
 The `encoder_coco2art_60ep` experiment trains `encoder_real` and `quant_conv_real` for 60 epochs while keeping the existing 60-epoch artwork decoder and `post_quant_conv` fixed. It uses the 140/20 train/validation split, L1 + LPIPS, EMA, and no early stopping during those 60 epochs. TensorBoard at http://localhost:6006 shows this run's `train/*`, `val/*`, and `val/input_baseline_current` images (rows: input, initial reconstruction, current reconstruction).

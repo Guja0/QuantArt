@@ -7,6 +7,7 @@ __pycache__/
 *.ckpt
 *.pt
 *.pth
+
 !taming/modules/autoencoder/lpips/vgg.pth
 landscape2art/
 landscape2art_continuous/
