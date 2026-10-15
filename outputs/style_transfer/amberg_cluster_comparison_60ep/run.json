@@ -1,0 +1,109 @@
+{
+  "settings": {
+    "config": "configs/coco2art.yaml",
+    "ckpt": "../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt",
+    "photos": "photo_sets_amberg",
+    "artworks": "../datasets/CU_data_jpg",
+    "clusters": "outputs/latent_visualization/coordinates_and_neighbors.csv",
+    "runs": "outputs/finetune_decoder",
+    "out": "outputs/style_transfer/amberg_cluster_comparison_60ep",
+    "seed": 23,
+    "descriptor": "gram",
+    "size": 512,
+    "device": "cuda"
+  },
+  "status": "complete",
+  "selected_artworks": [
+    {
+      "cluster": 1,
+      "image": "IMG_0606.jpg",
+      "cluster_size": 35
+    },
+    {
+      "cluster": 2,
+      "image": "IMG_0529.jpg",
+      "cluster_size": 25
+    },
+    {
+      "cluster": 3,
+      "image": "IMG_0509.jpg",
+      "cluster_size": 32
+    },
+    {
+      "cluster": 4,
+      "image": "IMG_0684.jpg",
+      "cluster_size": 31
+    },
+    {
+      "cluster": 5,
+      "image": "IMG_0695.jpg",
+      "cluster_size": 17
+    },
+    {
+      "cluster": 6,
+      "image": "IMG_0713.jpg",
+      "cluster_size": 40
+    }
+  ],
+  "photos": [
+    "photo_sets_amberg/IMG_0820.JPG",
+    "photo_sets_amberg/IMG_0821.HEIC",
+    "photo_sets_amberg/IMG_0822.HEIC",
+    "photo_sets_amberg/IMG_0823.HEIC",
+    "photo_sets_amberg/IMG_0824.HEIC",
+    "photo_sets_amberg/IMG_0825.HEIC",
+    "photo_sets_amberg/IMG_0826.HEIC",
+    "photo_sets_amberg/IMG_0827.HEIC"
+  ],
+  "models": {
+    "original": {
+      "label": "Original coco2art",
+      "weights": []
+    },
+    "decoder_only": {
+      "label": "Decoder only / epoch 60",
+      "weights": [
+        {
+          "path": "outputs/finetune_decoder/dev_coco2art_60ep/checkpoints/last_decoder.pt",
+          "sha256": "763f35625fb5a70024ebd7e7611c160b266b365dd255bf0b7ae09b4b80701224"
+        }
+      ]
+    },
+    "encoder_only": {
+      "label": "Encoder only + frozen tuned decoder / epoch 60",
+      "weights": [
+        {
+          "path": "outputs/finetune_decoder/encoder_coco2art_60ep/checkpoints/frozen_decoder.pt",
+          "sha256": "045b498741e2b9e51e7fcaca02927ae8f5da41bbc9461f5d7dba0d6b9b575ae9"
+        },
+        {
+          "path": "outputs/finetune_decoder/encoder_coco2art_60ep/checkpoints/last_encoder.pt",
+          "sha256": "00343ea5d439af0b2f303b4aec0e698ff7fac8eaaa141092e698db9d5bb8b977"
+        }
+      ]
+    },
+    "joint": {
+      "label": "Joint encoder + decoder / epoch 60",
+      "weights": [
+        {
+          "path": "outputs/finetune_decoder/joint_coco2art_edge_60ep/checkpoints/last_autoencoder.pt",
+          "sha256": "c950521458f9b0e7189e39e89e751705202ffc40bda6552942a37e6b1cddf1be"
+        }
+      ]
+    }
+  },
+  "completed_outputs": 192,
+  "notes": [
+    "Identical photo/artwork pairs and preprocessing for every model.",
+    "Continuous photo encoder -> pretrained transfer module -> decoder; no codebooks.",
+    "Encoder fine-tuning changes the artwork-reference encoder, not the photo encoder.",
+    "Encoder-only uses its saved frozen, already-tuned decoder.",
+    "Joint used edge loss; this is not a controlled single-variable ablation.",
+    "Clusters are exploratory appearance groups, not verified painting-medium labels.",
+    "Inputs fit within a 512px canvas by default with edge padding; output padding removed."
+  ],
+  "pretrained_sha256": "219d684f66a048aacb0d2ed7d670d0ca7f1c441e7c2bc16fae7c9ede36cd06c4",
+  "cluster_csv_sha256": "6d3a355e82d3c4feb945b6ad9fd5d6ec6390f0da72ecdddd26357919e8b74c01",
+  "encoder_frozen_decoder_matches_decoder_only": true,
+  "pairs": 48
+}
