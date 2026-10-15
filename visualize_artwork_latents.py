@@ -68,11 +68,11 @@ def discover_models(root, base):
         history = json.loads(history_file.read_text())
         epochs = history['history'][-1]['epoch']
         part = args.get('train_part', 'decoder')
-        suffix = 'encoder' if part == 'encoder' else 'decoder'
+        suffix = 'autoencoder' if part == 'both' else ('encoder' if part == 'encoder' else 'decoder')
         chosen = [('last', epochs)]
         if history.get('best_epoch', epochs) != epochs:
             chosen.append(('best', history['best_epoch']))
-        if part == 'encoder':
+        if part in ('encoder', 'both'):
             chosen.append(('last_raw', epochs))
         for tag, epoch in chosen:
             filename = f'{tag}_{suffix}.pt' if tag != 'last_raw' else f'last_{suffix}_raw.pt'
@@ -91,7 +91,7 @@ def discover_models(root, base):
             for key in base:
                 if base[key].shape != encoder[key].shape:
                     raise ValueError(f'Encoder architecture differs: {weights}')
-            if part == 'encoder' and not updated:
+            if part in ('encoder', 'both') and not updated:
                 raise ValueError(f'Encoder checkpoint has no encoder weights: {weights}')
             label = f'{args_file.parent.name} / {tag} / epoch {epoch}'
             models.append(dict(id=args_file.parent.name+'_'+tag, label=label, state=encoder,

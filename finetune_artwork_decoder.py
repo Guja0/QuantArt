@@ -1,16 +1,15 @@
-"""Fine-tune the continuous artwork decoder of QuantArt on a small artwork set.
+"""Fine-tune the continuous artwork autoencoder of QuantArt on a small artwork set.
 
 Path (no codebook):  x -> encoder_real -> quant_conv_real -> post_quant_conv -> decoder -> x_hat
-Frozen (eval mode):   encoder_real, quant_conv_real
-Trained:              post_quant_conv, decoder (or only the modules given with --train_layers)
-                      With --train_part encoder it is reversed: post_quant_conv + decoder are frozen
-                      and encoder_real + quant_conv_real are trained (checkpoints: *_encoder.pt).
+Default:              Train encoder_real, quant_conv_real, post_quant_conv, and decoder together.
+                      --train_part encoder or decoder retains the corresponding single-side mode.
+                      Photo encoder, style-transfer module, and codebooks are outside this model.
 Loss:                 L1(x_hat, x) + perceptual_weight * LPIPS(x_hat, x), where x is the same
                       augmented image that was fed to the encoder (perceptual_weight=0: L1 only),
-                      + optionally a PatchGAN hinge loss with taming's adaptive weight (--disc_weight > 0).
+                      + optional multi-scale gradient matching (--edge_weight) to preserve target detail,
 Data:                 random-resized crops: shorter side drawn from [size, size*scale_max] (capped at the
                       native resolution), so the decoder also sees brushstrokes near full resolution.
-Optimisation:         Adam, linear warmup + cosine decay per step; an EMA copy of the decoder weights is
+Optimisation:         Adam, linear warmup + cosine decay per step; an EMA copy of the trained weights is
                       validated and saved (--ema 0 disables it).
 
 Steps: baseline reconstructions on a few val images -> train with per-epoch validation
@@ -153,10 +152,28 @@ class ContinuousArtworkAE(torch.nn.Module):
 
     def set_train_mode(self, part):
         """Train mode only for the part being trained; the frozen part stays in eval mode."""
-        trained = (self.encoder_real, self.quant_conv_real) if part == "encoder" else (self.post_quant_conv, self.decoder)
+        modules = {"encoder": (self.encoder_real, self.quant_conv_real),
+                   "decoder": (self.post_quant_conv, self.decoder),
+                   "both": (self.encoder_real, self.quant_conv_real, self.post_quant_conv, self.decoder)}
+        trained = modules[part]
         self.eval()
         for m in trained:
             m.train()
+
+    def configure_train_part(self, part, train_layers=None):
+        """Set trainability before creating the optimizer; support switching modes safely."""
+        if part not in ("both", "encoder", "decoder"):
+            raise ValueError(f"Unknown training part: {part}")
+        if train_layers and part != "decoder":
+            raise ValueError("train_layers applies only to decoder-only training")
+        self.requires_grad_(True)
+        if part == "encoder":
+            self.freeze_decoder()
+            return self.encoder_parameters()
+        if part == "decoder":
+            self.freeze_encoder()
+            return self.decoder_parameters(train_layers)
+        return self.encoder_parameters() + self.decoder_parameters()
 
     def freeze_encoder(self):
         for m in (self.encoder_real, self.quant_conv_real):
@@ -227,34 +244,27 @@ def reconstruction_loss(x_hat, x, lpips, perceptual_weight):
     return l1 + perceptual_weight * p, l1, p
 
 
-# ----------------------------------------------------------------------------- GAN / EMA / schedule
+def edge_loss(x_hat, x):
+    """Per-image signed gradient matching at full, half, and quarter resolution.
 
-def diff_augment(x, translation=0.125, cutout=0.5):
-    """Differentiable translation + cutout (DiffAugment), applied to both real and fake images
-    before the discriminator so it cannot simply memorise the 140 training artworks."""
-    b, _, h, w = x.shape
-    dy, dx = (random.randint(-int(s * translation), int(s * translation)) for s in (h, w))
-    x = torch.roll(F.pad(x, (abs(dx), abs(dx), abs(dy), abs(dy))), shifts=(dy, dx), dims=(2, 3))
-    x = x[:, :, abs(dy):abs(dy) + h, abs(dx):abs(dx) + w]
-    ch, cw = int(h * cutout / 2), int(w * cutout / 2)
-    ys = torch.randint(0, h - ch + 1, (b, 1, 1), device=x.device)
-    xs = torch.randint(0, w - cw + 1, (b, 1, 1), device=x.device)
-    gy = torch.arange(h, device=x.device).view(1, h, 1)
-    gx = torch.arange(w, device=x.device).view(1, 1, w)
-    hole = (gy >= ys) & (gy < ys + ch) & (gx >= xs) & (gx < xs + cw)
-    return x * (~hole).unsqueeze(1).to(x.dtype)
-
-
-def hinge_d_loss(logits_real, logits_fake):
-    return 0.5 * (F.relu(1.0 - logits_real).mean() + F.relu(1.0 + logits_fake).mean())
+    Matching target gradients penalizes missing brushstrokes and invented edges;
+    maximizing an output sharpness score alone could reward noise.
+    """
+    losses = []
+    for scale in (1, 2, 4):
+        if min(x.shape[-2:]) // scale < 2:
+            continue
+        a = F.avg_pool2d(x_hat, scale) if scale > 1 else x_hat
+        b = F.avg_pool2d(x, scale) if scale > 1 else x
+        for da, db in ((a[..., 1:] - a[..., :-1], b[..., 1:] - b[..., :-1]),
+                       (a[..., 1:, :] - a[..., :-1, :], b[..., 1:, :] - b[..., :-1, :])):
+            losses.append(F.l1_loss(da, db, reduction="none").flatten(1).mean(1))
+    if not losses:
+        raise ValueError("Edge loss needs images at least 2 pixels high and wide")
+    return torch.stack(losses).mean(0)
 
 
-def adaptive_gan_weight(rec_loss, g_loss, last_layer):
-    # taming VQLPIPSWithDiscriminator.calculate_adaptive_weight: balance the gradient norms at the last layer.
-    rec_grad = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
-    g_grad = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
-    return (rec_grad.norm() / (g_grad.norm() + 1e-4)).clamp(0.0, 1e4).detach()
-
+# ----------------------------------------------------------------------------- EMA / schedule
 
 @torch.no_grad()
 def ema_update(ema_model, model, step, decay):
@@ -275,14 +285,27 @@ def warmup_cosine(warmup_steps, total_steps, min_ratio):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, lpips=None, perceptual_weight=0.0):
+def detail(x):
+    """Per-image high-frequency energy: mean |Laplacian| of the luminance."""
+    y = x.mean(1, keepdim=True)
+    k = torch.tensor([[0.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 0.0]], device=x.device).view(1, 1, 3, 3)
+    return F.conv2d(y, k).abs().flatten(1).mean(1)
+
+
+@torch.no_grad()
+def evaluate(model, loader, device, lpips=None, perceptual_weight=0.0, edge_weight=0.0):
     model.eval()
-    sums, n = {"loss": 0.0, "l1": 0.0, "lpips": 0.0, "psnr": 0.0}, 0
+    sums, n = {"loss": 0.0, "l1": 0.0, "lpips": 0.0, "edge_loss": 0.0, "psnr": 0.0, "sharpness": 0.0}, 0
     for x, _ in loader:
         x = x.to(device)
         x_hat = model.decode(model.encode(x))
         loss, l1, p = reconstruction_loss(x_hat, x, lpips, perceptual_weight)
-        for k, v in (("loss", loss), ("l1", l1), ("lpips", p), ("psnr", psnr(x_hat, x))):
+        edge = edge_loss(x_hat, x)
+        loss = loss + edge_weight * edge
+        # sharpness: detail kept relative to the input (1 = as much texture as the painting; L1 blur pushes it down)
+        sharp = detail(x_hat.clamp(-1, 1)) / detail(x).clamp_min(1e-6)
+        for k, v in (("loss", loss), ("l1", l1), ("lpips", p), ("edge_loss", edge),
+                     ("psnr", psnr(x_hat, x)), ("sharpness", sharp)):
             sums[k] += v.sum().item()
         n += x.shape[0]
     return {k: v / n for k, v in sums.items()}
@@ -330,20 +353,16 @@ def main():
     parser.add_argument("--min_lr_ratio", type=float, default=0.1, help="cosine decays to lr * this; 1 = constant LR")
     parser.add_argument("--ema", type=float, default=0.999, help="EMA decay of the trained weights (decoder or encoder side); 0 = off")
     parser.add_argument("--flip_p", type=float, default=0.5)
-    parser.add_argument("--train_part", choices=["decoder", "encoder"], default="decoder",
-                        help="decoder: freeze the encoder, train the decoder (default); "
-                             "encoder: freeze post_quant_conv + decoder, train encoder_real + quant_conv_real")
+    parser.add_argument("--train_part", choices=["both", "decoder", "encoder"], default="both",
+                        help="both: train the artwork encoder and decoder together (default); "
+                             "decoder or encoder: train only that side, freezing the other")
     parser.add_argument("--train_layers", nargs="+", default=None,
                         help="decoder-side modules to train, e.g. decoder.up.0 decoder.conv_out; "
                              "all other decoder layers are frozen (default: post_quant_conv + whole decoder)")
     parser.add_argument("--perceptual_weight", type=float, default=1.0,
                         help="weight of the LPIPS term (taming VQGAN uses 1.0); 0 = L1 only")
-    parser.add_argument("--disc_weight", type=float, default=0.0,
-                        help="PatchGAN loss weight on top of taming's adaptive weight (taming: 1.0); 0 = no GAN")
-    parser.add_argument("--disc_start", type=int, default=500,
-                        help="step at which the GAN term enters the decoder loss (the discriminator trains from step 0)")
-    parser.add_argument("--disc_layers", type=int, default=2, help="PatchGAN depth (taming: 3); smaller overfits less")
-    parser.add_argument("--disc_lr", type=float, default=None, help="discriminator LR (default: --lr)")
+    parser.add_argument("--edge_weight", type=float, default=0.2,
+                        help="multi-scale target gradient loss weight; try 0.2 to penalize smoothing")
     parser.add_argument("--select_metric", choices=["lpips", "loss", "l1"], default="lpips",
                         help="val metric for the best checkpoint and early stopping")
     parser.add_argument("--n_baseline", type=int, default=6, help="val images reconstructed as baseline")
@@ -354,6 +373,8 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--seed", type=int, default=23)
     opt = parser.parse_args()
+    if not math.isfinite(opt.edge_weight) or opt.edge_weight < 0:
+        parser.error("--edge_weight must be finite and nonnegative")
 
     random.seed(opt.seed)
     np.random.seed(opt.seed)
@@ -382,18 +403,12 @@ def main():
         print(f"Loaded decoder: {opt.decoder}")
     if device.type == "mps":
         patch_for_mps(model.decoder)
-        if opt.train_part == "encoder":
+        if opt.train_part in ("encoder", "both"):
             patch_for_mps(model.encoder_real)
-    if opt.train_part == "encoder":
-        if opt.train_layers:
-            parser.error("--train_layers selects decoder layers; it cannot be combined with --train_part encoder")
-        model.freeze_decoder()
-        params = model.encoder_parameters()
-        print("train part: encoder_real + quant_conv_real (post_quant_conv + decoder frozen)")
-    else:
-        model.freeze_encoder()
-        params = model.decoder_parameters(opt.train_layers)
-        print(f"train part: decoder, layers: {opt.train_layers or 'post_quant_conv + whole decoder'}")
+    if opt.train_layers and opt.train_part != "decoder":
+        parser.error("--train_layers is only supported with --train_part decoder")
+    params = model.configure_train_part(opt.train_part, opt.train_layers)
+    print(f"train part: {opt.train_part}; encoder and decoder both trainable: {opt.train_part == 'both'}")
     n_train = sum(p.numel() for p in params)
     n_frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
     print(f"trainable {n_train/1e6:.2f}M  frozen {n_frozen/1e6:.2f}M")
@@ -411,15 +426,6 @@ def main():
             p.requires_grad_(False)
     eval_model = ema_model or model
 
-    disc = None
-    if opt.disc_weight > 0:
-        from taming.modules.discriminator.model import NLayerDiscriminator, weights_init
-        disc = NLayerDiscriminator(input_nc=3, n_layers=opt.disc_layers).apply(weights_init).to(device)
-        disc_optimizer = torch.optim.Adam(disc.parameters(), lr=opt.disc_lr or opt.lr, betas=(0.5, 0.9))
-        # Gradient balancing at the last trainable conv, as taming does at decoder.conv_out.
-        last_layer = [p for p in params if p.ndim == 4][-1]
-        print(f"PatchGAN: {opt.disc_layers} layers, weight {opt.disc_weight}, enters the loss at step {opt.disc_start}")
-
     writer = SummaryWriter(os.path.join(run_dir, "tensorboard"))
     # LPIPS is always computed on validation (a texture-aware quality metric);
     # it is part of the training loss only when --perceptual_weight > 0.
@@ -427,7 +433,7 @@ def main():
     if device.type == "mps":
         patch_for_mps(lpips)
     w = opt.perceptual_weight
-    print(f"loss = L1 + {w} * LPIPS" + (f" + {opt.disc_weight} * adaptive * GAN" if disc else "")
+    print(f"loss = L1 + {w} * LPIPS + {opt.edge_weight} * edge"
           + f"   select on val {opt.select_metric}" + (f"   EMA {opt.ema}" if ema_model else ""))
 
     def log_val(metrics, epoch):
@@ -439,18 +445,24 @@ def main():
         # Preserve the exact frozen decoder needed to reconstruct with encoder exports.
         torch.save(model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", "frozen_decoder.pt"))
 
-    def save_decoder(name):
-        # Saves the trained part only: *_decoder.pt (decoder side) or *_encoder.pt (encoder side).
-        sd = eval_model.encoder_state_dict() if part == "encoder" else eval_model.decoder_state_dict()
-        torch.save(sd, os.path.join(run_dir, "checkpoints", name.replace("decoder", part)))
+    def save_weights(tag):
+        if part == "both":
+            torch.save(eval_model.state_dict(), os.path.join(run_dir, "checkpoints", f"{tag}_autoencoder.pt"))
+            # Side exports keep the existing photo-transfer interface usable.
+            torch.save(eval_model.encoder_state_dict(), os.path.join(run_dir, "checkpoints", f"{tag}_encoder.pt"))
+            torch.save(eval_model.decoder_state_dict(), os.path.join(run_dir, "checkpoints", f"{tag}_decoder.pt"))
+        else:
+            sd = eval_model.encoder_state_dict() if part == "encoder" else eval_model.decoder_state_dict()
+            torch.save(sd, os.path.join(run_dir, "checkpoints", f"{tag}_{part}.pt"))
 
     # Baseline: pretrained autoencoder on a fixed set of val images.
     vis = [val_set[i] for i in range(min(opt.n_baseline, len(val_set)))]
     vis_x, vis_names = torch.stack([v[0] for v in vis]), [v[1] for v in vis]
     vis_base = reconstruct(model, vis_x, device)
     save_pairs(os.path.join(run_dir, "baseline"), vis_names, vis_x, vis_base)
-    base = evaluate(model, val_loader, device, lpips, w)
-    print(f"baseline  val loss {base['loss']:.4f}  L1 {base['l1']:.4f}  LPIPS {base['lpips']:.4f}  PSNR {base['psnr']:.2f}")
+    base = evaluate(model, val_loader, device, lpips, w, opt.edge_weight)
+    print(f"baseline  val loss {base['loss']:.4f}  L1 {base['l1']:.4f}  LPIPS {base['lpips']:.4f}  PSNR {base['psnr']:.2f}"
+          f"  sharpness {base['sharpness']:.2f}")
     log_val(base, 0)
     writer.add_image("val/input_baseline", grid(vis_x, vis_base), 0)
 
@@ -458,7 +470,7 @@ def main():
                 **{f"val_{k}": v for k, v in base.items()}}]
     sel = opt.select_metric
     best_val, best_epoch, bad_epochs, prev_train = base[sel], 0, 0, None
-    save_decoder("best_decoder.pt")
+    save_weights("best")
 
     def write_history():
         with open(os.path.join(run_dir, "history.json"), "w") as f:
@@ -469,57 +481,47 @@ def main():
     step = 0
     for epoch in range(1, opt.epochs + 1):
         model.set_train_mode(part)
-        t0, sums, n = time.time(), {"loss": 0.0, "l1": 0.0, "lpips": 0.0}, 0
+        t0, sums, n = time.time(), {"loss": 0.0, "l1": 0.0, "lpips": 0.0, "edge_loss": 0.0}, 0
         for i, (x, _) in enumerate(train_loader):
             if opt.max_steps and i >= opt.max_steps:
                 break
             x = x.to(device)
-            if part == "encoder":
-                h = model.encode(x)          # gradients flow back through the frozen decoder
+            if part in ("encoder", "both"):
+                h = model.encode(x)          # preserve encoder gradients in encoder and joint modes
             else:
                 with torch.no_grad():
                     h = model.encode(x)
             x_hat = model.decode(h)
             # target = the same augmented image that went into the encoder
             rec, l1, p = reconstruction_loss(x_hat, x, lpips if w > 0 else None, w)
+            edge = edge_loss(x_hat, x)
+            rec = rec + opt.edge_weight * edge
             rec = rec.mean()
             loss = rec
-            if disc is not None and step >= opt.disc_start:
-                disc.requires_grad_(False)
-                g_loss = -disc(diff_augment(x_hat)).mean()
-                d_weight = opt.disc_weight * adaptive_gan_weight(rec, g_loss, last_layer)  # encoder: quant_conv_real
-                loss = rec + d_weight * g_loss
-                disc.requires_grad_(True)
-                writer.add_scalar("train/g_loss_step", g_loss.item(), step)
-                writer.add_scalar("train/d_weight_step", d_weight.item(), step)
+            if not torch.isfinite(rec):
+                raise RuntimeError(f"Nonfinite reconstruction loss at epoch {epoch}, batch {i}")
+            if not torch.isfinite(loss):
+                raise RuntimeError(f"Nonfinite total loss at epoch {epoch}, batch {i}")
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
             scheduler.step()
             if ema_model is not None:
                 ema_update(ema_model, model, step, opt.ema)
-            if disc is not None:
-                logits_real = disc(diff_augment(x))
-                logits_fake = disc(diff_augment(x_hat.detach()))
-                d_loss = hinge_d_loss(logits_real, logits_fake)
-                disc_optimizer.zero_grad(set_to_none=True)
-                d_loss.backward()
-                disc_optimizer.step()
-                writer.add_scalar("train/d_loss_step", d_loss.item(), step)
-                writer.add_scalar("train/logits_real_step", logits_real.mean().item(), step)
-                writer.add_scalar("train/logits_fake_step", logits_fake.mean().item(), step)
             step += 1
-            # "loss" is the reconstruction objective (without the GAN term) so epochs stay comparable.
-            for k, v in (("loss", rec.item()), ("l1", l1.mean().item()), ("lpips", p.mean().item())):
+            # The objective combines pixel, perceptual, and edge agreement.
+            for k, v in (("loss", rec.item()), ("l1", l1.mean().item()), ("lpips", p.mean().item()),
+                         ("edge_loss", edge.mean().item())):
                 sums[k] += v * x.shape[0]
             n += x.shape[0]
             writer.add_scalar("train/loss_step", rec.item(), step)
             writer.add_scalar("train/l1_step", l1.mean().item(), step)
+            writer.add_scalar("train/edge_loss_step", edge.mean().item(), step)
             if w > 0:
                 writer.add_scalar("train/lpips_step", p.mean().item(), step)
         train = {k: v / n for k, v in sums.items()}
 
-        val = evaluate(eval_model, val_loader, device, lpips, w)
+        val = evaluate(eval_model, val_loader, device, lpips, w, opt.edge_weight)
         vis_now = reconstruct(eval_model, vis_x, device)
         for k, v in train.items():
             if k != "lpips" or w > 0:
@@ -536,28 +538,29 @@ def main():
         improved = val[sel] < best_val
         if improved:
             best_val, best_epoch, bad_epochs = val[sel], epoch, 0
-            save_decoder("best_decoder.pt")
+            save_weights("best")
         elif prev_train is not None and train["loss"] < prev_train:
             bad_epochs += 1
         prev_train = train["loss"]
         history.append({"epoch": epoch, **{f"train_{k}": v for k, v in train.items()},
                         **{f"val_{k}": v for k, v in val.items()}})
         print(f"epoch {epoch:2d}  train loss {train['loss']:.4f}  val loss {val['loss']:.4f}"
-              f"  L1 {val['l1']:.4f}  LPIPS {val['lpips']:.4f}  PSNR {val['psnr']:.2f}"
+              f"  L1 {val['l1']:.4f}  LPIPS {val['lpips']:.4f}  edge {val['edge_loss']:.4f}"
+              f"  PSNR {val['psnr']:.2f}  sharp {val['sharpness']:.2f}"
               f"  lr {optimizer.param_groups[0]['lr']:.2e}  {'*best*' if improved else ''}  {time.time()-t0:.0f}s")
         write_history()
-        if part == "encoder":
-            save_decoder("last_decoder.pt")
+        save_weights("last")
         if bad_epochs >= opt.patience:
             print(f"early stop: train improving while val worse than best for {bad_epochs} epochs")
             break
 
-    save_decoder("last_decoder.pt")
+    save_weights("last")
     if ema_model is not None:
-        raw = model.encoder_state_dict() if part == "encoder" else model.decoder_state_dict()
-        torch.save(raw, os.path.join(run_dir, "checkpoints", f"last_{part}_raw.pt"))
+        raw = model.state_dict() if part == "both" else (model.encoder_state_dict() if part == "encoder" else model.decoder_state_dict())
+        label = "autoencoder" if part == "both" else part
+        torch.save(raw, os.path.join(run_dir, "checkpoints", f"last_{label}_raw.pt"))
     writer.close()
-    print(f"best epoch {best_epoch}  val {sel} {best_val:.4f}  -> {run_dir}/checkpoints/best_{part}.pt")
+    print(f"best epoch {best_epoch}  val {sel} {best_val:.4f}  -> {run_dir}/checkpoints/best_{'autoencoder' if part == 'both' else part}.pt")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ This is a copy of the official QuantArt code with an added experiment: fine-tuni
 | File | Purpose |
 | ---- | ---- |
 | `make_cu_split.py` | Converts the artworks to JPEG and splits them 140 / 20 / 20 (train / val / test), keeping duplicate and near-duplicate images in the same split. The resulting lists are in `datasets/CU_data_split/`. |
-| `finetune_artwork_decoder.py` | Freezes the artwork encoder (eval mode) and trains only the decoder on the no-codebook path. Training crops are 256×256 random-resized crops (shorter side drawn from 256 to `--scale_max`×256, capped at the native size) with horizontal flips. Loss: L1 + LPIPS (`--perceptual_weight`, default 1.0), optionally plus a PatchGAN hinge loss with DiffAugment and taming's adaptive weight (`--disc_weight`). Adam with linear warmup + cosine decay; an EMA copy of the decoder (`--ema`) is validated and saved. Validates every epoch, keeps the best checkpoint by val LPIPS (`--select_metric`), stops early when training improves while validation gets worse, and logs to TensorBoard. |
+| `finetune_artwork_decoder.py` | Trains the continuous artwork encoder and decoder together by default, with L1 + LPIPS + multi-scale edge loss, warmup/cosine scheduling, EMA and TensorBoard. Optional encoder-only and decoder-only modes remain available. No discriminator is used. |
 | `compare_decoders.py` | Evaluates the original and the fine-tuned decoder once on the test set (L1 / PSNR / LPIPS), then runs QuantArt style transfer with identical content–style pairs through both decoders and scores it with latent proxies plus a VGG Gram style distance and LPIPS to the content photo. |
 | `reconstruct_artwork.py` | Reconstructs images with a single autoencoder (the artwork autoencoder, or a Stage-1 VQGAN via `--stage1`), with and without vector quantization. |
 | `main.py` | One change: falls back to CPU when CUDA is unavailable. |
@@ -26,13 +26,52 @@ The new scripts use plain PyTorch (see `requirements-train.txt`) and run on Appl
 
 ```
 python make_cu_split.py
-python finetune_artwork_decoder.py --run l1_lpips_60ep_ema
-python finetune_artwork_decoder.py --run l1_lpips_gan_60ep_ema --disc_weight 0.5
+python finetune_artwork_decoder.py --train_part both --edge_weight 0.2 --run joint_ae_60ep
+python finetune_artwork_decoder.py --train_part decoder --edge_weight 0 --run l1_lpips_60ep_ema
 python compare_decoders.py --run outputs/finetune_decoder/l1_lpips_60ep_ema
 tensorboard --logdir outputs/finetune_decoder
 ```
 
-By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture. Those runs used 10 epochs at lr 3e-6 (about 350 steps), fixed 288 px crops and no EMA or GAN; the closest equivalent now is `--epochs 10 --lr 3e-6 --min_lr_ratio 1 --warmup_steps 0 --scale_max 1.125 --ema 0 --select_metric loss --patience 2` (crops are now drawn from 256–288 px instead of always 288 px).
+By default the scripts load the `landscape2art` checkpoint from `landscape2art/` and use its artwork autoencoder with the codebook bypassed; pass `--config` / `--ckpt` to use another checkpoint. On the 20 test artworks, L1-only fine-tuning raised PSNR (21.0 → 23.5 dB) but blurred the images (LPIPS 0.362 → 0.472, lower is better). L1 + LPIPS gave 22.7 dB and LPIPS 0.340 while keeping texture. Those runs used 10 epochs at lr 3e-6 (about 350 steps), fixed 288 px crops and no EMA or GAN; the closest equivalent now is `--train_part decoder --edge_weight 0 --epochs 10 --lr 3e-6 --min_lr_ratio 1 --warmup_steps 0 --scale_max 1.125 --ema 0 --select_metric loss --patience 2` (crops are now drawn from 256–288 px instead of always 288 px).
+
+## Full comparison of original and fine-tuned autoencoders
+
+`compare_all_autoencoders.py` evaluates every artwork with matched deterministic inputs. The primary comparison uses original coco2art and the **final epoch-60 EMA checkpoints** from decoder-only, encoder-only, and joint training. Supplementary center-crop comparisons include the best encoder/joint checkpoints, earlier GAN experiments, and the all-images epoch-87 decoder.
+
+```bash
+.venv/bin/python -u compare_all_autoencoders.py --device cuda \
+  --out outputs/model_comparison_all_artworks
+```
+
+Outputs include an offline `comparison.html` browser, a detailed `RESULTS.md`, model provenance in `summary.json`, per-image and aggregate CSV metrics, and individual PNG reconstructions. Each of the 180 artworks has labeled comparisons and fixed-scale error maps for three views: full composition fitted to 512 pixels; the validation-style 256-pixel center crop; and a 256-pixel detail patch selected by target gradient energy from nine candidate patches at up to 640-pixel short-side resolution. The input selection is identical across models. Train/validation/test metrics are separate.
+
+Interpret the encoder-only model as **updated encoder plus previously fine-tuned frozen decoder**. Comparing it to decoder-only isolates its encoder update; comparing it to original includes changes to both sides. Joint training also adds edge loss, so this is an experiment comparison rather than a controlled architecture ablation. The epoch-87 decoder used all artworks for training, making even its nominal test-subset reconstruction in-sample. Higher PSNR or lower LPIPS alone does not establish better brushwork: inspect target-matching edge/Laplacian errors, sharpness ratio, and the actual detail crops.
+
+Run from the `QuantArt` directory using the existing CUDA environment. The completed comparison refuses to overwrite its output folder; use a different `--out` for a later evaluation. This script performs evaluation only.
+
+## Joint artwork autoencoder fine-tuning (no discriminator)
+
+The default is now `--train_part both`: train `encoder_real`, `quant_conv_real`, `post_quant_conv`, and `decoder` together. No discriminator is created or trained; the GAN losses, flags, and selection gating have been removed from the fine-tuning script. QuantArt's photo encoder, transfer module, and codebooks remain outside this reconstruction experiment.
+
+The loss is L1 + LPIPS + 0.2 × multi-scale target-gradient matching. `--edge_weight` defaults to 0.2; set it to 0 to disable that penalty. Training and validation log unweighted edge error separately. Warmup/cosine scheduling, EMA, TensorBoard reconstruction grids, and single-side encoder/decoder modes remain available. Existing GAN experiment artifacts are preserved as historical results.
+
+Run from `QuantArt`:
+
+```bash
+.venv/bin/python -u finetune_artwork_decoder.py \
+  --config configs/coco2art.yaml \
+  --ckpt ../checkpoints-20261013T103406Z-1-001/checkpoints/last.ckpt \
+  --data ../datasets/CU_data_jpg --split datasets/CU_data_split \
+  --train_part both --edge_weight 0.2 \
+  --epochs 60 --patience 61 --batch_size 4 --device cuda \
+  --run joint_coco2art_edge_60ep
+```
+
+The run saves `best_autoencoder.pt` and `last_autoencoder.pt` with **both sides**, along with matching `best_encoder.pt`/`best_decoder.pt` and `last_encoder.pt`/`last_decoder.pt` exports. `last_autoencoder_raw.pt` contains the final non-EMA model. Use the complete autoencoder checkpoint or matching encoder/decoder exports from the same run and epoch.
+
+`compare_decoders.py --run ...` prefers `best_autoencoder.pt` when present. For photo transfer, use `stylize_pair.py --autoencoder .../best_autoencoder.pt` with the original config/checkpoint and your content/style paths. Changing the artwork encoder changes the reference features used by the pretrained transfer module, so assess photo transfer separately from reconstruction. The latent visualization script also recognizes joint checkpoints.
+
+The one-epoch GPU verification run is `outputs/finetune_decoder/joint_autoencoder_verify_20261014/`. The 60-epoch command above is provided for starting a full experiment separately.
 
 ## Artwork latent-space comparisons
 

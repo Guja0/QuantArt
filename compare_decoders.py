@@ -104,15 +104,14 @@ def main():
     out = os.path.join(opt.run, "comparison")
     weights = opt.weights
     if weights is None:
-        for name in ("best_decoder.pt", "best_encoder.pt"):
+        for name in ("best_autoencoder.pt", "best_decoder.pt", "best_encoder.pt"):
             if os.path.exists(os.path.join(opt.run, "checkpoints", name)):
                 weights = os.path.join(opt.run, "checkpoints", name)
                 break
     if weights is None:
-        parser.error(f"no best_decoder.pt or best_encoder.pt in {opt.run}/checkpoints; pass --weights")
+        parser.error(f"no best_autoencoder.pt, best_decoder.pt or best_encoder.pt in {opt.run}/checkpoints; pass --weights")
     adapted_sd = torch.load(weights, map_location="cpu", weights_only=True)
-    print(f"adapted weights: {weights} ({len(adapted_sd)} tensors, "
-          f"{'encoder' if any(k.startswith('encoder_real.') for k in adapted_sd) else 'decoder'} side)")
+    print(f"adapted weights: {weights} ({len(adapted_sd)} tensors)")
 
     # ---- 1. test reconstruction --------------------------------------------------
     test_set = ArtworkDataset(opt.data, os.path.join(opt.split, "test.txt"))

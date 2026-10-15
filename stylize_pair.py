@@ -41,6 +41,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--ckpt", required=True)
+    parser.add_argument("--autoencoder", default=None, help="joint artwork encoder + decoder weights (*_autoencoder.pt)")
     parser.add_argument("--encoder", default=None, help="fine-tuned encoder_real + quant_conv_real weights (*_encoder.pt)")
     parser.add_argument("--decoder", default=None, help="fine-tuned post_quant_conv + decoder weights (*_decoder.pt)")
     parser.add_argument("--content", required=True)
@@ -49,8 +50,10 @@ def main():
     parser.add_argument("--size", type=int, default=512, help="Square inference canvas, multiple of 16")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
-    if args.encoder is None and args.decoder is None:
-        parser.error("pass --encoder and/or --decoder")
+    if args.autoencoder is None and args.encoder is None and args.decoder is None:
+        parser.error("pass --autoencoder or --encoder and/or --decoder")
+    if args.autoencoder and (args.encoder or args.decoder):
+        parser.error("--autoencoder cannot be combined with separate --encoder/--decoder weights")
     if args.size < 32 or args.size % 16:
         parser.error("--size must be at least 32 and a multiple of 16")
     device = pick_device(args.device)
@@ -64,7 +67,8 @@ def main():
     qa = ContinuousQuantArt.from_checkpoint(args.config, args.ckpt).to(device).eval().requires_grad_(False)
     with torch.inference_mode():
         original = qa.transfer(x, ref).cpu()[0]
-    for path, prefixes, what in ((args.encoder, ENCODER_PREFIXES, "encoder_real and quant_conv_real"),
+    for path, prefixes, what in ((args.autoencoder, ENCODER_PREFIXES + DECODER_PREFIXES, "the complete artwork autoencoder"),
+                                 (args.encoder, ENCODER_PREFIXES, "encoder_real and quant_conv_real"),
                                  (args.decoder, DECODER_PREFIXES, "decoder and post_quant_conv")):
         if path is None:
             continue
